@@ -1,0 +1,42 @@
+# ========================
+# DLSS 5 Studio — .gitignore
+# ========================
+
+# ----- Node / Frontend -----
+dlss5-studio/node_modules/
+dlss5-studio/dist/
+dlss5-studio/.oxlintrc.json
+
+# ----- Rust / Tauri -----
+dlss5-studio/src-tauri/target/
+dlss5-studio/src-tauri/gen/
+
+# ----- Runtime Binaries (too large for git) -----
+bin/ffmpeg/
+bin/mpv/
+bin/yt-dlp/
+bin/python-3.13.15-embed-amd64/
+bin/runtime/
+
+# ----- Outputs / Renders -----
+outputs/
+
+# ----- Logs -----
+logs/
+*.log
+
+# ----- OS / Editor -----
+.DS_Store
+Thumbs.db
+*.suo
+*.user
+.idea/
+.vscode/settings.json
+*.swp
+*~
+
+# ----- Temp / Cache -----
+__pycache__/
+*.pyc
+*.pyo
+.cache/

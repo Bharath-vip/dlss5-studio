@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-main: #07090e;
+    --bg-card: #0d121c;
+    --bg-card-hover: #131b28;
+    --border-subtle: #1c2638;
+    --border-glow: #00ff8833;
+    --text-primary: #f0f6fc;
+    --text-muted: #8b949e;
+    --rtx-green: #76b900;
+    --rtx-green-glow: #76b90044;
+    --cyber-cyan: #00e5ff;
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    user-select: none;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d15;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Title bar window dragging */
+[data-tauri-drag-region] {
+  app-region: drag;
+}
+
+.no-drag {
+  app-region: no-drag;
+}
