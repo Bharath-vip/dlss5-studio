@@ -1,6 +1,7 @@
 use crate::hardware::gpu::{detect_primary_gpu, GpuInfo};
 use crate::media::pipeline::{PipelineConfig, PipelineOrchestrator, PipelineResult};
 use crate::media::probe::{probe_file, MediaMetadata};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -92,12 +93,48 @@ pub fn open_output_dir(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Returns metadata about a file (size, existence) without reading its contents.
+/// Used by the frontend to decide whether to stream or load a media file.
+#[derive(Serialize)]
+pub struct FileInfo {
+    pub size: u64,
+    pub exists: bool,
+}
+
+#[tauri::command]
+pub fn get_file_info(path: String) -> Result<FileInfo, String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Ok(FileInfo { size: 0, exists: false });
+    }
+    let meta = std::fs::metadata(p).map_err(|e| format!("Failed to stat file: {}", e))?;
+    Ok(FileInfo {
+        size: meta.len(),
+        exists: true,
+    })
+}
+
+/// Loads a small image file as a base64 data URL.
+/// Enforces a 50 MB size limit — larger files must use the asset:// protocol instead.
 #[tauri::command]
 pub fn load_media_data_url(path: String) -> Result<String, String> {
     let p = Path::new(&path);
     if !p.exists() {
         return Err(format!("File does not exist: {}", path));
     }
+
+    // Safety guard: never load files larger than 50 MB into RAM.
+    const MAX_BYTES: u64 = 50 * 1024 * 1024;
+    let file_size = std::fs::metadata(p)
+        .map_err(|e| format!("Failed to stat file: {}", e))?
+        .len();
+    if file_size > MAX_BYTES {
+        return Err(format!(
+            "File too large for data URL ({} MB). Use asset:// streaming instead.",
+            file_size / (1024 * 1024)
+        ));
+    }
+
     let bytes = std::fs::read(p).map_err(|e| format!("Failed to read file: {}", e))?;
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("png").to_lowercase();
     let mime = match ext.as_str() {
@@ -106,24 +143,11 @@ pub fn load_media_data_url(path: String) -> Result<String, String> {
         "webp" => "image/webp",
         "gif" => "image/gif",
         "bmp" => "image/bmp",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        "mov" => "video/quicktime",
-        "mkv" => "video/x-matroska",
         _ => "application/octet-stream",
     };
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(format!("data:{};base64,{}", mime, b64))
-}
-
-#[tauri::command]
-pub fn read_media_bytes(path: String) -> Result<Vec<u8>, String> {
-    let p = Path::new(&path);
-    if !p.exists() {
-        return Err(format!("File does not exist: {}", path));
-    }
-    std::fs::read(p).map_err(|e| format!("Failed to read file: {}", e))
 }
 
 #[tauri::command]
@@ -139,3 +163,4 @@ pub fn export_file_as(source_path: String, destination_path: String) -> Result<(
     std::fs::copy(src, dst).map_err(|e| format!("Failed to export file: {}", e))?;
     Ok(())
 }
+

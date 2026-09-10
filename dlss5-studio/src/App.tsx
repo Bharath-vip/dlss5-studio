@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Component } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { HeaderHud } from './components/HeaderHud';
 import { MediaDropzone } from './components/MediaDropzone';
@@ -560,3 +560,49 @@ export const App: React.FC = () => {
 };
 
 export default App;
+
+// ─── Global Error Boundary ────────────────────────────────────────────────────
+// Catches unhandled JS/React exceptions and renders a recovery panel instead of
+// freezing or showing a blank screen.
+interface ErrorBoundaryState { hasError: boolean; message: string }
+
+class ErrorBoundary extends Component<{ children: React.ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+  static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
+    return { hasError: true, message: error instanceof Error ? error.message : String(error) };
+  }
+  componentDidCatch(error: unknown, info: React.ErrorInfo) {
+    console.error('[DLSS 5 Studio] Unhandled error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          height: '100vh', background: '#07090e', color: '#f0f6fc', fontFamily: 'system-ui, sans-serif', gap: 16
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>⚠️</div>
+          <h2 style={{ color: '#ff4d4d', margin: 0, fontSize: 20, fontWeight: 600 }}>Application Error</h2>
+          <p style={{ color: '#8b949e', margin: 0, maxWidth: 500, textAlign: 'center', fontSize: 14 }}>
+            {this.state.message || 'An unexpected error occurred.'}
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false, message: '' })}
+            style={{
+              marginTop: 16, padding: '8px 24px', background: '#76b900', color: '#000', border: 'none',
+              borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 14
+            }}
+          >
+            Reload Session
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export { ErrorBoundary };

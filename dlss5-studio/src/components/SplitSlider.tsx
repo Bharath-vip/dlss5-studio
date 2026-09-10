@@ -30,24 +30,51 @@ interface SplitSliderProps {
   onToggleLoupe?: () => void;
 }
 
+/**
+ * Resolve a local file path to a URL the WebView can render.
+ *
+ * Videos: use Tauri's asset:// streaming protocol (convertFileSrc).
+ *   This streams bytes on-demand directly from disk — zero memory copy,
+ *   zero IPC overhead. Works for any file size.
+ *
+ * Images: use a data URL (base64) via the Rust command, but only if the
+ *   file is small enough (<= 50 MB). Larger images also fall back to
+ *   streaming to avoid OOM.
+ */
 const resolveMediaSrc = async (path?: string, isVideo: boolean = false): Promise<string> => {
   if (!path) return '';
-  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:') || path.startsWith('blob:')) {
+  if (
+    path.startsWith('http://') ||
+    path.startsWith('https://') ||
+    path.startsWith('data:') ||
+    path.startsWith('blob:') ||
+    path.startsWith('asset://')
+  ) {
     return path;
   }
-  try {
-    if (isVideo) {
-      const bytes = await invoke<number[]>('read_media_bytes', { path });
-      const ext = path.split('.').pop()?.toLowerCase() || 'mp4';
-      const mime = ext === 'webm' ? 'video/webm' : ext === 'mov' ? 'video/quicktime' : 'video/mp4';
-      const blob = new Blob([new Uint8Array(bytes)], { type: mime });
-      return URL.createObjectURL(blob);
-    } else {
-      const dataUrl = await invoke<string>('load_media_data_url', { path });
-      return dataUrl;
+
+  // Videos: ALWAYS stream — never load into memory.
+  if (isVideo) {
+    try {
+      return convertFileSrc(path);
+    } catch (err) {
+      console.warn('[SplitSlider] convertFileSrc failed, using raw path:', err);
+      return path;
     }
-  } catch (err) {
-    console.warn('Fallback to convertFileSrc:', err);
+  }
+
+  // Images: try data URL (fine for typical images).
+  // Fall back to streaming if the command fails or file is too large.
+  try {
+    const fileInfo = await invoke<{ size: number }>('get_file_info', { path });
+    const MAX_IMAGE_BYTES = 50 * 1024 * 1024; // 50 MB
+    if (fileInfo.size > MAX_IMAGE_BYTES) {
+      return convertFileSrc(path);
+    }
+    const dataUrl = await invoke<string>('load_media_data_url', { path });
+    return dataUrl;
+  } catch {
+    // Fallback: stream even for images
     try {
       return convertFileSrc(path);
     } catch {

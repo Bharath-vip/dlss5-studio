@@ -3,7 +3,7 @@ pub mod hardware;
 pub mod media;
 pub mod protocols;
 
-use commands::{cancel_pipeline, export_file_as, get_gpu_info, load_media_data_url, open_output_dir, probe_media, read_media_bytes, start_pipeline, AppState};
+use commands::{cancel_pipeline, export_file_as, get_file_info, get_gpu_info, load_media_data_url, open_output_dir, probe_media, start_pipeline, AppState};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
@@ -82,8 +82,8 @@ pub fn run() {
             start_pipeline,
             cancel_pipeline,
             open_output_dir,
+            get_file_info,
             load_media_data_url,
-            read_media_bytes,
             export_file_as
         ])
         .run(tauri::generate_context!());
