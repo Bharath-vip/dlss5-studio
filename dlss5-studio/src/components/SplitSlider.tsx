@@ -15,6 +15,9 @@ import {
   Repeat,
   Eye,
   Crosshair,
+  UploadCloud,
+  FolderOpen,
+  Sparkles,
 } from 'lucide-react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
@@ -29,18 +32,13 @@ interface SplitSliderProps {
   isLoupeActive?: boolean;
   onToggleLoupe?: () => void;
   targetResolutionTag?: string;
+  onBrowseMedia?: () => void;
 }
 
 /**
  * Resolve a local file path to a URL the WebView can render.
- *
- * Videos: use Tauri's asset:// streaming protocol (convertFileSrc).
- *   This streams bytes on-demand directly from disk — zero memory copy,
- *   zero IPC overhead. Works for any file size.
- *
- * Images: use a data URL (base64) via the Rust command, but only if the
- *   file is small enough (<= 50 MB). Larger images also fall back to
- *   streaming to avoid OOM.
+ * Videos: use Tauri's asset:// streaming protocol (convertFileSrc) for zero memory copy.
+ * Images: use data URL if <= 50MB, else fallback to asset:// streaming.
  */
 const resolveMediaSrc = async (path?: string, isVideo: boolean = false): Promise<string> => {
   if (!path) return '';
@@ -64,8 +62,7 @@ const resolveMediaSrc = async (path?: string, isVideo: boolean = false): Promise
     }
   }
 
-  // Images: try data URL (fine for typical images).
-  // Fall back to streaming if the command fails or file is too large.
+  // Images: try data URL, fallback to streaming
   try {
     const fileInfo = await invoke<{ size: number }>('get_file_info', { path });
     const MAX_IMAGE_BYTES = 50 * 1024 * 1024; // 50 MB
@@ -75,7 +72,6 @@ const resolveMediaSrc = async (path?: string, isVideo: boolean = false): Promise
     const dataUrl = await invoke<string>('load_media_data_url', { path });
     return dataUrl;
   } catch {
-    // Fallback: stream even for images
     try {
       return convertFileSrc(path);
     } catch {
@@ -101,6 +97,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
   isLoupeActive: controlledLoupeActive,
   onToggleLoupe: controlledOnToggleLoupe,
   targetResolutionTag,
+  onBrowseMedia,
 }) => {
   const [normOriginal, setNormOriginal] = useState<string>('');
   const [normEnhanced, setNormEnhanced] = useState<string>('');
@@ -112,6 +109,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
   const setViewMode = (mode: ViewMode) => {
     setInternalViewMode(mode);
     onViewModeChange?.(mode);
+    showHudToast(`View Mode: ${mode.toUpperCase()}`);
   };
 
   const [sliderPosition, setSliderPosition] = useState<number>(50);
@@ -123,6 +121,20 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // On-Screen Display (OSD) Toast Feedback
+  const [hudMessage, setHudMessage] = useState<string | null>(null);
+  const hudTimerRef = useRef<number | null>(null);
+
+  const showHudToast = (msg: string) => {
+    setHudMessage(msg);
+    if (hudTimerRef.current) {
+      clearTimeout(hudTimerRef.current);
+    }
+    hudTimerRef.current = window.setTimeout(() => {
+      setHudMessage(null);
+    }, 1600);
+  };
+
   // Pixel Loupe (4x Inspection Tool)
   const [internalLoupeActive, setInternalLoupeActive] = useState<boolean>(false);
   const loupeActive = controlledLoupeActive ?? internalLoupeActive;
@@ -132,6 +144,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
     } else {
       setInternalLoupeActive(!internalLoupeActive);
     }
+    showHudToast(`Loupe: ${!loupeActive ? 'ENABLED (4x)' : 'DISABLED'}`);
   };
   const [mousePos, setMousePos] = useState<{ x: number; y: number; containerW: number; containerH: number } | null>(null);
 
@@ -150,7 +163,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
   const enhVideoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Synchronized audio routing: ensures no echo, routes to active selection or original
+  // Synchronized audio routing: ensures zero audio echo
   useEffect(() => {
     const playOriginal = !normEnhanced || viewMode === 'original' || audioSource === 'original';
 
@@ -189,6 +202,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
       active = false;
     };
   }, [originalSrc, enhancedSrc, isVideo]);
+
   // Video Synchronization: Master/Slave time and playback sync
   const masterVideo = enhVideoRef.current || origVideoRef.current;
   const slaveVideo = enhVideoRef.current && origVideoRef.current ? origVideoRef.current : null;
@@ -201,7 +215,6 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
     }
     if (slaveVideo) {
       const drift = Math.abs(masterVideo.currentTime - slaveVideo.currentTime);
-      // If drift exceeds 25 milliseconds, snap slave to master currentTime
       if (drift > 0.025) {
         slaveVideo.currentTime = masterVideo.currentTime;
       }
@@ -244,10 +257,12 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
       masterVideo.pause();
       if (slaveVideo) slaveVideo.pause();
       setIsPlaying(false);
+      showHudToast('PAUSE');
     } else {
       masterVideo.play().catch(() => {});
       if (slaveVideo) slaveVideo.play().catch(() => {});
       setIsPlaying(true);
+      showHudToast('PLAY');
     }
   };
 
@@ -268,29 +283,49 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
     masterVideo.currentTime = target;
     if (slaveVideo) slaveVideo.currentTime = target;
     setCurrentTime(target);
+    showHudToast(`Frame Step: ${frames > 0 ? '+1' : '-1'}`);
   };
 
   const changePlaybackRate = (rate: number) => {
     setPlaybackRate(rate);
     if (masterVideo) masterVideo.playbackRate = rate;
     if (slaveVideo) slaveVideo.playbackRate = rate;
+    showHudToast(`Speed: ${rate}x`);
   };
 
   const toggleMute = () => {
-    setIsMuted(!isMuted);
+    const nextMute = !isMuted;
+    setIsMuted(nextMute);
+    showHudToast(nextMute ? 'MUTED' : `VOLUME: ${Math.round(volume * 100)}%`);
   };
 
-  // Split Slider Divider Movement
-  const handleSliderMove = useCallback(
-    (clientX: number) => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const x = clientX - rect.left;
-      const percentage = Math.max(0, Math.min(100, (x / rect.width) * 100));
-      setSliderPosition(percentage);
-    },
-    []
-  );
+  // Robust Window-Level Split Slider Movement (never loses tracking during rapid mouse move)
+  const handleSliderMove = useCallback((clientX: number) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const percentage = Math.max(0, Math.min(100, (x / rect.width) * 100));
+    setSliderPosition(percentage);
+  }, []);
+
+  const handleDividerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingSlider(true);
+
+    const onGlobalMouseMove = (moveEvent: MouseEvent) => {
+      handleSliderMove(moveEvent.clientX);
+    };
+
+    const onGlobalMouseUp = () => {
+      setIsDraggingSlider(false);
+      window.removeEventListener('mousemove', onGlobalMouseMove);
+      window.removeEventListener('mouseup', onGlobalMouseUp);
+    };
+
+    window.addEventListener('mousemove', onGlobalMouseMove);
+    window.addEventListener('mouseup', onGlobalMouseUp);
+  };
 
   // Mouse Pan Handling
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -309,9 +344,8 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
         setMousePos({ x, y, containerW: rect.width, containerH: rect.height });
       }
     }
-    if (isDraggingSlider) {
-      handleSliderMove(e.clientX);
-    } else if (isPanning && zoom > 1) {
+
+    if (isPanning && zoom > 1) {
       setPan({
         x: e.clientX - panStartRef.current.x,
         y: e.clientY - panStartRef.current.y,
@@ -320,17 +354,39 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
   };
 
   const handleMouseUp = () => {
-    setIsDraggingSlider(false);
     setIsPanning(false);
+  };
+
+  // Smooth Mouse Wheel Zoom (1.0x to 8.0x)
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY;
+    const zoomStep = 0.25;
+    let newZoom = zoom;
+
+    if (delta < 0) {
+      newZoom = Math.min(8.0, Number((zoom + zoomStep).toFixed(2)));
+    } else {
+      newZoom = Math.max(1.0, Number((zoom - zoomStep).toFixed(2)));
+    }
+
+    if (newZoom !== zoom) {
+      setZoom(newZoom);
+      if (newZoom === 1.0) {
+        setPan({ x: 0, y: 0 });
+      }
+      showHudToast(`Zoom: ${newZoom.toFixed(1)}x`);
+    }
   };
 
   const resetTransform = () => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setSliderPosition(50);
+    showHudToast('View Reset (1.0x)');
   };
 
-  // Keyboard Shortcuts (Space to play, Arrows to step frame, L for Loupe, 1-4 for view modes)
+  // Global Viewport Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
@@ -361,21 +417,69 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isVideo, isPlaying, duration, masterVideo, slaveVideo, loupeActive]);
+  }, [isVideo, isPlaying, duration, masterVideo, slaveVideo, loupeActive, zoom]);
 
+  // ================= INTERACTIVE EMPTY STATE LAUNCHPAD =================
   if (!enhancedSrc && !originalSrc) {
     return (
-      <div className="w-full h-full min-h-[380px] bg-[#070b12] border border-[#1b2537] rounded-xl flex flex-col items-center justify-center text-gray-500 font-mono text-xs">
-        <Sliders className="w-10 h-10 mb-2 opacity-30 text-[#76b900]" />
-        <span>No media loaded</span>
+      <div
+        onClick={onBrowseMedia}
+        className="w-full h-full min-h-[380px] bg-[#070b12] border border-dashed border-[#1e2c44] hover:border-[#76b900]/70 rounded-xl flex flex-col items-center justify-center p-6 text-gray-400 font-mono text-xs cursor-pointer group transition-all duration-300 shadow-inner"
+      >
+        <div className="w-16 h-16 rounded-2xl bg-[#0f1726] group-hover:bg-[#76b900]/20 flex items-center justify-center mb-4 transition-all duration-300 border border-[#1b263b] group-hover:border-[#76b900]/40 group-hover:scale-105 shadow-lg">
+          <UploadCloud className="w-8 h-8 text-gray-400 group-hover:text-[#76b900] transition-colors" />
+        </div>
+
+        <h3 className="text-sm font-semibold text-gray-200 group-hover:text-white mb-1">
+          Drop Video or Image Here to Open
+        </h3>
+        <p className="text-gray-500 text-[11px] mb-4">
+          or click anywhere to browse from storage • MP4, MKV, MOV, PNG, JPG, WEBP
+        </p>
+
+        {onBrowseMedia && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onBrowseMedia();
+            }}
+            className="px-4 py-2 bg-[#122316] hover:bg-[#1a3821] text-[#76b900] hover:text-[#90ee00] rounded-lg border border-[#76b900]/40 font-bold text-xs flex items-center gap-2 shadow-lg shadow-[#76b900]/10 transition-all cursor-pointer mb-6"
+          >
+            <FolderOpen className="w-4 h-4" />
+            <span>Browse Media Files (Ctrl+O)</span>
+          </button>
+        )}
+
+        {/* Keyboard Quick Guide */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] text-gray-500 border-t border-[#131d2e] pt-4 max-w-lg w-full">
+          <div className="flex items-center gap-1.5 bg-[#0b101c] px-2 py-1 rounded border border-[#172235]">
+            <kbd className="px-1 py-0.5 bg-gray-800 text-gray-300 rounded font-mono text-[9px]">Space</kbd>
+            <span>Play/Pause</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-[#0b101c] px-2 py-1 rounded border border-[#172235]">
+            <kbd className="px-1 py-0.5 bg-gray-800 text-gray-300 rounded font-mono text-[9px]">1 - 4</kbd>
+            <span>View Modes</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-[#0b101c] px-2 py-1 rounded border border-[#172235]">
+            <kbd className="px-1 py-0.5 bg-gray-800 text-gray-300 rounded font-mono text-[9px]">L</kbd>
+            <span>4x Loupe</span>
+          </div>
+          <div className="flex items-center gap-1.5 bg-[#0b101c] px-2 py-1 rounded border border-[#172235]">
+            <kbd className="px-1 py-0.5 bg-gray-800 text-gray-300 rounded font-mono text-[9px]">Wheel</kbd>
+            <span>Zoom In/Out</span>
+          </div>
+        </div>
       </div>
     );
   }
 
   const transformStyle = {
     transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
-    transition: isPanning ? 'none' : 'transform 0.15s ease-out',
+    transition: isPanning ? 'none' : 'transform 0.12s ease-out',
   };
+
+  const hasBothStreams = Boolean(normOriginal && normEnhanced);
 
   return (
     <div className="w-full h-full flex flex-col bg-[#06090f] border border-[#1d2a3f] rounded-xl overflow-hidden shadow-2xl">
@@ -386,10 +490,15 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
           <button
             type="button"
             onClick={() => setViewMode('split')}
-            className={`px-2.5 py-1 rounded flex items-center space-x-1.5 transition-colors cursor-pointer ${
-              viewMode === 'split' ? 'bg-[#76b900] text-black font-bold' : 'text-gray-400 hover:text-gray-200 bg-[#121a28]'
+            disabled={!hasBothStreams}
+            className={`px-2.5 py-1 rounded flex items-center space-x-1.5 transition-colors ${
+              !hasBothStreams
+                ? 'opacity-40 cursor-not-allowed text-gray-600 bg-[#0a0f18]'
+                : viewMode === 'split'
+                ? 'bg-[#76b900] text-black font-bold cursor-pointer'
+                : 'text-gray-400 hover:text-gray-200 bg-[#121a28] cursor-pointer'
             }`}
-            title="Split comparison slider"
+            title={hasBothStreams ? 'Split comparison slider (1)' : 'Render with DLSS 5 to enable split comparison'}
           >
             <Sliders className="w-3.5 h-3.5" />
             <span>Split</span>
@@ -398,26 +507,33 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
           <button
             type="button"
             onClick={() => setViewMode('side')}
-            className={`px-2.5 py-1 rounded flex items-center space-x-1.5 transition-colors cursor-pointer ${
-              viewMode === 'side' ? 'bg-[#76b900] text-black font-bold' : 'text-gray-400 hover:text-gray-200 bg-[#121a28]'
+            disabled={!hasBothStreams}
+            className={`px-2.5 py-1 rounded flex items-center space-x-1.5 transition-colors ${
+              !hasBothStreams
+                ? 'opacity-40 cursor-not-allowed text-gray-600 bg-[#0a0f18]'
+                : viewMode === 'side'
+                ? 'bg-[#76b900] text-black font-bold cursor-pointer'
+                : 'text-gray-400 hover:text-gray-200 bg-[#121a28] cursor-pointer'
             }`}
-            title="Side-by-side comparison"
+            title={hasBothStreams ? 'Side-by-side comparison (2)' : 'Render with DLSS 5 to enable side-by-side'}
           >
             <Columns className="w-3.5 h-3.5" />
             <span>Side by Side</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setViewMode(viewMode === 'enhanced' ? 'split' : 'enhanced')}
-            className={`px-2 py-1 rounded flex items-center space-x-1 transition-colors cursor-pointer ${
-              viewMode === 'enhanced' ? 'bg-cyan-500 text-black font-bold' : 'text-gray-400 hover:text-gray-200 bg-[#121a28]'
-            }`}
-            title="Show enhanced only"
-          >
-            <Eye className="w-3.5 h-3.5" />
-            <span>Enhanced</span>
-          </button>
+          {normEnhanced && (
+            <button
+              type="button"
+              onClick={() => setViewMode(viewMode === 'enhanced' ? 'split' : 'enhanced')}
+              className={`px-2 py-1 rounded flex items-center space-x-1 transition-colors cursor-pointer ${
+                viewMode === 'enhanced' ? 'bg-cyan-500 text-black font-bold' : 'text-gray-400 hover:text-gray-200 bg-[#121a28]'
+              }`}
+              title="Show enhanced only (3)"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>Enhanced</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -425,7 +541,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
             className={`px-2 py-1 rounded flex items-center space-x-1 transition-colors cursor-pointer ${
               viewMode === 'original' ? 'bg-gray-200 text-black font-bold' : 'text-gray-400 hover:text-gray-200 bg-[#121a28]'
             }`}
-            title="Show original only"
+            title="Show source original only (4)"
           >
             <span>Original</span>
           </button>
@@ -458,18 +574,27 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
           <div className="flex items-center space-x-1 bg-[#121a28] rounded p-0.5 border border-[#1e2e46]">
             <button
               type="button"
-              onClick={() => setZoom(Math.max(1, zoom - 0.5))}
+              onClick={() => {
+                const newZ = Math.max(1, zoom - 0.5);
+                setZoom(newZ);
+                if (newZ === 1) setPan({ x: 0, y: 0 });
+                showHudToast(`Zoom: ${newZ.toFixed(1)}x`);
+              }}
               className="p-1 hover:bg-[#1b283d] text-gray-400 hover:text-white rounded cursor-pointer"
               title="Zoom out"
             >
               <ZoomOut className="w-3.5 h-3.5" />
             </button>
             <span className="px-1.5 text-[11px] text-gray-300 min-w-[36px] text-center font-bold">
-              {zoom === 1 ? 'Fit' : `${zoom.toFixed(1)}x`}
+              {zoom === 1 ? '1.0x' : `${zoom.toFixed(1)}x`}
             </span>
             <button
               type="button"
-              onClick={() => setZoom(Math.min(4, zoom + 0.5))}
+              onClick={() => {
+                const newZ = Math.min(8, zoom + 0.5);
+                setZoom(newZ);
+                showHudToast(`Zoom: ${newZ.toFixed(1)}x`);
+              }}
               className="p-1 hover:bg-[#1b283d] text-gray-400 hover:text-white rounded cursor-pointer"
               title="Zoom in"
             >
@@ -481,7 +606,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
             type="button"
             onClick={resetTransform}
             className="p-1.5 bg-[#121a28] hover:bg-[#1b283d] text-gray-400 hover:text-white rounded border border-[#1e2e46] cursor-pointer"
-            title="Reset view (R)"
+            title="Reset zoom & pan (R)"
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
@@ -494,14 +619,31 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onWheel={handleWheel}
         onMouseLeave={() => {
           handleMouseUp();
           setMousePos(null);
         }}
         className={`relative flex-1 min-h-[340px] bg-black overflow-hidden select-none ${
-          loupeActive ? 'cursor-crosshair' : zoom > 1 ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : viewMode === 'split' ? 'cursor-ew-resize' : 'cursor-default'
+          loupeActive
+            ? 'cursor-crosshair'
+            : zoom > 1
+            ? isPanning
+              ? 'cursor-grabbing'
+              : 'cursor-grab'
+            : hasBothStreams && viewMode === 'split'
+            ? 'cursor-ew-resize'
+            : 'cursor-default'
         }`}
       >
+        {/* On-Screen Display HUD Toast */}
+        {hudMessage && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none px-3.5 py-1.5 rounded-full bg-black/85 backdrop-blur-md border border-[#76b900]/40 text-[#76b900] text-xs font-mono font-bold shadow-2xl animate-fade-in flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#76b900] animate-ping" />
+            <span>{hudMessage}</span>
+          </div>
+        )}
+
         {/* ================= PIXEL LOUPE 4X INSPECTOR OVERLAY ================= */}
         {loupeActive && mousePos && (
           <div
@@ -525,19 +667,13 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
             >
               {normEnhanced ? (
                 isVideo ? (
-                  <video
-                    src={normEnhanced}
-                    className="max-w-full max-h-full object-contain"
-                  />
+                  <video src={normEnhanced} className="max-w-full max-h-full object-contain" />
                 ) : (
                   <img src={normEnhanced} alt="Loupe Enhanced" className="max-w-full max-h-full object-contain" />
                 )
               ) : normOriginal ? (
                 isVideo ? (
-                  <video
-                    src={normOriginal}
-                    className="max-w-full max-h-full object-contain"
-                  />
+                  <video src={normOriginal} className="max-w-full max-h-full object-contain" />
                 ) : (
                   <img src={normOriginal} alt="Loupe Original" className="max-w-full max-h-full object-contain" />
                 )
@@ -561,70 +697,98 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
         {loadingMedia && (
           <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center space-x-2 text-xs font-mono text-[#76b900]">
             <Loader2 className="w-5 h-5 animate-spin" />
-            <span>Loading media...</span>
+            <span>Loading stream bitstream...</span>
           </div>
         )}
 
-        {/* ----------------- MODE A: SPLIT SLIDER ----------------- */}
-        {viewMode === 'split' && (
+        {/* ================= PRE-RENDER STATE: FULL ORIGINAL PREVIEW ================= */}
+        {!normEnhanced && normOriginal && (
+          <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+            <div style={transformStyle} className="w-full h-full flex items-center justify-center">
+              {isVideo ? (
+                <video
+                  ref={origVideoRef}
+                  src={normOriginal}
+                  playsInline
+                  muted={isMuted}
+                  onTimeUpdate={handleMasterTimeUpdate}
+                  onPlay={handleMasterPlay}
+                  onPause={handleMasterPause}
+                  onEnded={handleMasterEnded}
+                  className="max-w-full max-h-full object-contain pointer-events-none"
+                />
+              ) : (
+                <img src={normOriginal} alt="Source Preview" className="max-w-full max-h-full object-contain pointer-events-none" />
+              )}
+            </div>
+
+            {/* Status Pills */}
+            <div className="absolute top-3 left-3 z-30 pointer-events-none flex items-center space-x-2">
+              <span className="px-2.5 py-1 rounded bg-black/80 backdrop-blur-md border border-white/15 text-[11px] font-mono text-gray-200 font-bold">
+                SOURCE STREAM PREVIEW
+              </span>
+            </div>
+
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+              <div className="px-3.5 py-1.5 rounded-full bg-black/80 backdrop-blur-md border border-[#76b900]/40 text-[#76b900] text-[11px] font-mono flex items-center gap-1.5 shadow-xl">
+                <Sparkles className="w-3.5 h-3.5 text-[#76b900] animate-pulse" />
+                <span>Ready • Click "MASTER & RENDER" to generate DLSS 5 output</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= POST-RENDER: MODE A - SPLIT SLIDER ================= */}
+        {hasBothStreams && viewMode === 'split' && (
           <>
             {/* Enhanced Layer (Bottom) */}
             <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
               <div style={transformStyle} className="w-full h-full flex items-center justify-center">
-                {normEnhanced ? (
-                  isVideo ? (
-                    <video
-                      ref={enhVideoRef}
-                      src={normEnhanced}
-                      playsInline
-                      muted={isMuted}
-                      onTimeUpdate={handleMasterTimeUpdate}
-                      onPlay={handleMasterPlay}
-                      onPause={handleMasterPause}
-                      onEnded={handleMasterEnded}
-                      className="max-w-full max-h-full object-contain pointer-events-none"
-                    />
-                  ) : (
-                    <img src={normEnhanced} alt="Enhanced" className="max-w-full max-h-full object-contain pointer-events-none" />
-                  )
+                {isVideo ? (
+                  <video
+                    ref={enhVideoRef}
+                    src={normEnhanced}
+                    playsInline
+                    muted={isMuted}
+                    onTimeUpdate={handleMasterTimeUpdate}
+                    onPlay={handleMasterPlay}
+                    onPause={handleMasterPause}
+                    onEnded={handleMasterEnded}
+                    className="max-w-full max-h-full object-contain pointer-events-none"
+                  />
                 ) : (
-                  <div className="text-xs text-gray-500 font-mono">Awaiting DLSS 5 Processing...</div>
+                  <img src={normEnhanced} alt="Enhanced" className="max-w-full max-h-full object-contain pointer-events-none" />
                 )}
               </div>
             </div>
 
             {/* Original Layer (Clipped Top) */}
-            {normOriginal && (
-              <div
-                className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none"
-                style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
-              >
-                <div style={transformStyle} className="w-full h-full flex items-center justify-center">
-                  {isVideo ? (
-                    <video
-                      ref={origVideoRef}
-                      src={normOriginal}
-                      playsInline
-                      muted={true}
-                      className="max-w-full max-h-full object-contain"
-                    />
-                  ) : (
-                    <img src={normOriginal} alt="Original" className="max-w-full max-h-full object-contain" />
-                  )}
-                </div>
+            <div
+              className="absolute inset-0 flex items-center justify-center overflow-hidden pointer-events-none"
+              style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
+            >
+              <div style={transformStyle} className="w-full h-full flex items-center justify-center">
+                {isVideo ? (
+                  <video
+                    ref={origVideoRef}
+                    src={normOriginal}
+                    playsInline
+                    muted={true}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                ) : (
+                  <img src={normOriginal} alt="Original" className="max-w-full max-h-full object-contain" />
+                )}
               </div>
-            )}
+            </div>
 
             {/* Split Divider Handle */}
             <div
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                setIsDraggingSlider(true);
-              }}
+              onMouseDown={handleDividerMouseDown}
               style={{ left: `${sliderPosition}%` }}
-              className="absolute top-0 bottom-0 w-[2px] bg-[#76b900] shadow-[0_0_12px_#76b900] cursor-ew-resize z-20 flex items-center justify-center -translate-x-1/2"
+              className="absolute top-0 bottom-0 w-[2px] bg-[#76b900] shadow-[0_0_15px_#76b900] cursor-ew-resize z-30 flex items-center justify-center -translate-x-1/2 group"
             >
-              <div className="w-6 h-6 rounded-full bg-[#76b900] text-black shadow-lg flex items-center justify-center cursor-ew-resize">
+              <div className="w-7 h-7 rounded-full bg-[#76b900] text-black shadow-[0_0_12px_rgba(118,185,0,0.8)] flex items-center justify-center cursor-ew-resize group-hover:scale-110 transition-transform">
                 <Sliders className="w-3.5 h-3.5 rotate-90" />
               </div>
             </div>
@@ -643,8 +807,8 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
           </>
         )}
 
-        {/* ----------------- MODE B: SIDE BY SIDE ----------------- */}
-        {viewMode === 'side' && (
+        {/* ================= MODE B: SIDE BY SIDE ================= */}
+        {hasBothStreams && viewMode === 'side' && (
           <div className="absolute inset-0 grid grid-cols-2 divide-x divide-[#1b263b]">
             {/* Left: Original */}
             <div className="relative flex flex-col items-center justify-center overflow-hidden bg-[#05080e]">
@@ -654,18 +818,17 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
                 </span>
               </div>
               <div style={transformStyle} className="w-full h-full flex items-center justify-center p-2">
-                {normOriginal &&
-                  (isVideo ? (
-                    <video
-                      ref={origVideoRef}
-                      src={normOriginal}
-                      playsInline
-                      muted={true}
-                      className="max-w-full max-h-full object-contain pointer-events-none"
-                    />
-                  ) : (
-                    <img src={normOriginal} alt="Original" className="max-w-full max-h-full object-contain pointer-events-none" />
-                  ))}
+                {isVideo ? (
+                  <video
+                    ref={origVideoRef}
+                    src={normOriginal}
+                    playsInline
+                    muted={true}
+                    className="max-w-full max-h-full object-contain pointer-events-none"
+                  />
+                ) : (
+                  <img src={normOriginal} alt="Original" className="max-w-full max-h-full object-contain pointer-events-none" />
+                )}
               </div>
             </div>
 
@@ -677,41 +840,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
                 </span>
               </div>
               <div style={transformStyle} className="w-full h-full flex items-center justify-center p-2">
-                {normEnhanced ? (
-                  isVideo ? (
-                    <video
-                      ref={enhVideoRef}
-                      src={normEnhanced}
-                      playsInline
-                      muted={isMuted}
-                      onTimeUpdate={handleMasterTimeUpdate}
-                      onPlay={handleMasterPlay}
-                      onPause={handleMasterPause}
-                      onEnded={handleMasterEnded}
-                      className="max-w-full max-h-full object-contain pointer-events-none"
-                    />
-                  ) : (
-                    <img src={normEnhanced} alt="Enhanced" className="max-w-full max-h-full object-contain pointer-events-none" />
-                  )
-                ) : (
-                  <div className="text-xs text-gray-500 font-mono">Awaiting DLSS 5 Processing...</div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ----------------- MODE C: ENHANCED FULL ----------------- */}
-        {viewMode === 'enhanced' && (
-          <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
-            <div className="absolute top-2 left-2 z-10">
-              <span className="px-2 py-0.5 rounded bg-[#76b900]/90 text-[10px] font-mono text-black font-bold">
-                DLSS 5
-              </span>
-            </div>
-            <div style={transformStyle} className="w-full h-full flex items-center justify-center">
-              {normEnhanced ? (
-                isVideo ? (
+                {isVideo ? (
                   <video
                     ref={enhVideoRef}
                     src={normEnhanced}
@@ -725,16 +854,42 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
                   />
                 ) : (
                   <img src={normEnhanced} alt="Enhanced" className="max-w-full max-h-full object-contain pointer-events-none" />
-                )
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= MODE C: ENHANCED FULL ================= */}
+        {normEnhanced && viewMode === 'enhanced' && (
+          <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+            <div className="absolute top-2 left-2 z-10">
+              <span className="px-2 py-0.5 rounded bg-[#76b900]/90 text-[10px] font-mono text-black font-bold">
+                DLSS 5
+              </span>
+            </div>
+            <div style={transformStyle} className="w-full h-full flex items-center justify-center">
+              {isVideo ? (
+                <video
+                  ref={enhVideoRef}
+                  src={normEnhanced}
+                  playsInline
+                  muted={isMuted}
+                  onTimeUpdate={handleMasterTimeUpdate}
+                  onPlay={handleMasterPlay}
+                  onPause={handleMasterPause}
+                  onEnded={handleMasterEnded}
+                  className="max-w-full max-h-full object-contain pointer-events-none"
+                />
               ) : (
-                <div className="text-xs text-gray-500 font-mono">Awaiting DLSS 5 Processing...</div>
+                <img src={normEnhanced} alt="Enhanced" className="max-w-full max-h-full object-contain pointer-events-none" />
               )}
             </div>
           </div>
         )}
 
-        {/* ----------------- MODE D: ORIGINAL FULL ----------------- */}
-        {viewMode === 'original' && (
+        {/* ================= MODE D: ORIGINAL FULL ================= */}
+        {normOriginal && viewMode === 'original' && (
           <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
             <div className="absolute top-2 left-2 z-10">
               <span className="px-2 py-0.5 rounded bg-black/80 text-[10px] font-mono text-gray-300 font-bold">
@@ -742,18 +897,21 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
               </span>
             </div>
             <div style={transformStyle} className="w-full h-full flex items-center justify-center">
-              {normOriginal &&
-                (isVideo ? (
-                  <video
-                    ref={origVideoRef}
-                    src={normOriginal}
-                    playsInline
-                    muted={true}
-                    className="max-w-full max-h-full object-contain pointer-events-none"
-                  />
-                ) : (
-                  <img src={normOriginal} alt="Original" className="max-w-full max-h-full object-contain pointer-events-none" />
-                ))}
+              {isVideo ? (
+                <video
+                  ref={origVideoRef}
+                  src={normOriginal}
+                  playsInline
+                  muted={isMuted}
+                  onTimeUpdate={handleMasterTimeUpdate}
+                  onPlay={handleMasterPlay}
+                  onPause={handleMasterPause}
+                  onEnded={handleMasterEnded}
+                  className="max-w-full max-h-full object-contain pointer-events-none"
+                />
+              ) : (
+                <img src={normOriginal} alt="Original" className="max-w-full max-h-full object-contain pointer-events-none" />
+              )}
             </div>
           </div>
         )}
@@ -823,7 +981,11 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
 
             <button
               type="button"
-              onClick={() => setIsLooping(!isLooping)}
+              onClick={() => {
+                const nextLoop = !isLooping;
+                setIsLooping(nextLoop);
+                showHudToast(`Loop: ${nextLoop ? 'ON' : 'OFF'}`);
+              }}
               className={`p-1.5 rounded border cursor-pointer transition-colors ${
                 isLooping ? 'bg-[#76b900]/20 border-[#76b900]/50 text-[#76b900]' : 'bg-[#141e2e] border-[#20314a] text-gray-500'
               }`}
@@ -835,7 +997,11 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
             {normEnhanced && (
               <button
                 type="button"
-                onClick={() => setAudioSource(audioSource === 'enhanced' ? 'original' : 'enhanced')}
+                onClick={() => {
+                  const nextSource = audioSource === 'enhanced' ? 'original' : 'enhanced';
+                  setAudioSource(nextSource);
+                  showHudToast(`Audio Source: ${nextSource === 'enhanced' ? 'DLSS 5' : 'Original'}`);
+                }}
                 className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-[10px] font-mono text-cyan-300 rounded border border-[#20314a] cursor-pointer"
                 title="Switch audio track between Enhanced and Original"
               >

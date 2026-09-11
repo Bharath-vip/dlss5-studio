@@ -9,6 +9,10 @@ import {
   Sun,
   Activity,
   Maximize2,
+  ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
+  ChevronsDownUp,
 } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 
@@ -21,6 +25,27 @@ interface PipelineStagesProps {
 
 export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange, isVideo, metadata }) => {
   const [stage1Tab, setStage1Tab] = useState<'realism' | 'neural' | 'renodx' | 'reshade'>('realism');
+  const [openStages, setOpenStages] = useState<{ [key: string]: boolean }>({
+    stage1: true,
+    stage2: false,
+    stage3: false,
+    stage4: false,
+  });
+
+  const toggleStage = (stage: string) => {
+    setOpenStages((prev) => ({ ...prev, [stage]: !prev[stage] }));
+  };
+
+  const allCollapsed = !openStages.stage1 && !openStages.stage2 && !openStages.stage3 && !openStages.stage4;
+  const toggleAllStages = () => {
+    const nextState = allCollapsed;
+    setOpenStages({
+      stage1: nextState,
+      stage2: nextState,
+      stage3: nextState,
+      stage4: nextState,
+    });
+  };
 
   const handleBrowseOutputDir = async () => {
     try {
@@ -343,10 +368,21 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
     <div className="space-y-3">
       {/* Quick Enhancement Presets */}
       <div className="bg-[#0b101c] border border-[#1b263b] rounded-xl p-2.5 flex items-center justify-between text-xs font-mono">
-        <span className="text-gray-400 font-semibold text-[11px] px-1 flex items-center gap-1">
-          <Activity className="w-3 h-3 text-[#76b900]" />
-          PRESETS:
-        </span>
+        <div className="flex items-center space-x-2">
+          <span className="text-gray-400 font-semibold text-[11px] px-1 flex items-center gap-1">
+            <Activity className="w-3 h-3 text-[#76b900]" />
+            PRESETS:
+          </span>
+          <button
+            type="button"
+            onClick={toggleAllStages}
+            className="px-2 py-0.5 bg-[#141e2e] hover:bg-[#1f2e46] text-gray-300 hover:text-white rounded text-[10px] font-mono border border-[#23354f] flex items-center gap-1 cursor-pointer transition-colors"
+            title={allCollapsed ? "Expand all stage settings" : "Collapse all stage settings"}
+          >
+            {allCollapsed ? <ChevronsUpDown className="w-3 h-3 text-[#76b900]" /> : <ChevronsDownUp className="w-3 h-3 text-cyan-400" />}
+            <span>{allCollapsed ? "Expand All" : "Collapse"}</span>
+          </button>
+        </div>
         <div className="flex items-center space-x-1.5 overflow-x-auto">
           <button
             type="button"
@@ -406,41 +442,58 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
       <div className={`border rounded-xl transition-all duration-200 ${
         config.enable_nr ? 'bg-[#0c121e] border-[#1d2b42]' : 'bg-[#080d14]/60 border-[#141c2b]'
       }`}>
-        <div className="p-3.5 flex items-center justify-between">
+        <div
+          onClick={() => toggleStage('stage1')}
+          className="p-3.5 flex items-center justify-between cursor-pointer select-none group"
+        >
           <div className="flex items-center space-x-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
               config.enable_nr ? 'bg-[#76b900]/20 text-[#76b900]' : 'bg-gray-800/40 text-gray-500'
             }`}>
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-sm font-semibold text-gray-200">DLSS 5 Neural Reconstruction</span>
+                <span className="text-sm font-semibold text-gray-200 group-hover:text-white">DLSS 5 Neural Reconstruction</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono">
                   Stage 1
                 </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-300 font-mono">
-                  Realism Model
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono">
-                  + ReShade / RenoDX
-                </span>
+                {!openStages.stage1 && config.enable_nr && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#76b900]/15 text-[#76b900] font-mono border border-[#76b900]/30 truncate max-w-[140px]">
+                    {config.dlss5.realism_mode === 'anime_to_real' ? 'Anime ➔ Real' : 'Real ➔ Ultra Real'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center space-x-1.5 text-[10px] text-gray-400 font-mono mt-0.5">
+                <span>Realism Neural Core</span>
+                <span>•</span>
+                <span>RenoDX / ReShade</span>
               </div>
             </div>
           </div>
 
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.enable_nr}
-              onChange={(e) => update({ enable_nr: e.target.checked })}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#76b900]"></div>
-          </label>
+          <div className="flex items-center space-x-2.5" onClick={(e) => e.stopPropagation()}>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={config.enable_nr}
+                onChange={(e) => update({ enable_nr: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#76b900]"></div>
+            </label>
+
+            <button
+              type="button"
+              onClick={() => toggleStage('stage1')}
+              className="p-1 text-gray-400 hover:text-white rounded hover:bg-[#162438] transition-colors cursor-pointer"
+            >
+              {openStages.stage1 ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
-        {config.enable_nr && (
+        {config.enable_nr && openStages.stage1 && (
           <div className="px-4 pb-4 pt-1 border-t border-[#1b2a42] space-y-3 text-xs">
             {/* Stage 1 Sub-Navigation Tabs */}
             <div className="flex items-center space-x-1 border-b border-[#1b263b] pb-2 font-mono text-[11px]">
@@ -1015,40 +1068,58 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
       <div className={`border rounded-xl transition-all duration-200 ${
         config.enable_upscale ? 'bg-[#0f1726] border-[#223552]' : 'bg-[#0a0f18]/60 border-[#152033]'
       }`}>
-        <div className="p-3.5 flex items-center justify-between">
+        <div
+          onClick={() => toggleStage('stage2')}
+          className="p-3.5 flex items-center justify-between cursor-pointer select-none group"
+        >
           <div className="flex items-center space-x-3">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
               config.enable_upscale ? 'bg-cyan-500/20 text-cyan-400' : 'bg-gray-800/40 text-gray-500'
             }`}>
               <ZoomIn className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-sm font-semibold text-gray-200">Super Resolution (4K / 8K)</span>
+                <span className="text-sm font-semibold text-gray-200 group-hover:text-white">Super Resolution (4K / 8K)</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 font-mono">
                   Stage 2
                 </span>
                 {config.enable_upscale && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#76b900]/20 text-[#76b900] font-mono font-bold">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-mono font-bold border border-cyan-500/30">
                     {targetRes.tag}
                   </span>
                 )}
               </div>
+              <div className="flex items-center space-x-1.5 text-[10px] text-gray-400 font-mono mt-0.5">
+                <span>{targetRes.width}×{targetRes.height}</span>
+                <span>•</span>
+                <span>{config.upscale_engine}</span>
+              </div>
             </div>
           </div>
 
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config.enable_upscale}
-              onChange={(e) => update({ enable_upscale: e.target.checked })}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
-          </label>
+          <div className="flex items-center space-x-2.5" onClick={(e) => e.stopPropagation()}>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={config.enable_upscale}
+                onChange={(e) => update({ enable_upscale: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
+            </label>
+
+            <button
+              type="button"
+              onClick={() => toggleStage('stage2')}
+              className="p-1 text-gray-400 hover:text-white rounded hover:bg-[#162438] transition-colors cursor-pointer"
+            >
+              {openStages.stage2 ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
-        {config.enable_upscale && (
+        {config.enable_upscale && openStages.stage2 && (
           <div className="px-4 pb-4 pt-1 border-t border-[#1b2a42] space-y-3.5 text-xs">
             {/* Dynamic Real-Time Resolution Transformation HUD Banner */}
             <div className="p-2.5 bg-[#09111c] border border-cyan-500/30 rounded-lg flex items-center justify-between font-mono">
@@ -1241,35 +1312,56 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
         <div className={`border rounded-xl transition-all duration-200 ${
           config.enable_frame_gen ? 'bg-[#0f1726] border-[#223552]' : 'bg-[#0a0f18]/60 border-[#152033]'
         }`}>
-          <div className="p-3.5 flex items-center justify-between">
+          <div
+            onClick={() => toggleStage('stage3')}
+            className="p-3.5 flex items-center justify-between cursor-pointer select-none group"
+          >
             <div className="flex items-center space-x-3">
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
                 config.enable_frame_gen ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-800/40 text-gray-500'
               }`}>
                 <Zap className="w-4 h-4" />
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm font-semibold text-gray-200">DLSS-G Optical Flow Frame Gen</span>
+                  <span className="text-sm font-semibold text-gray-200 group-hover:text-white">DLSS-G Frame Gen</span>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-mono">
                     Stage 3
                   </span>
+                  {config.enable_frame_gen && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-bold border border-amber-500/30">
+                      {config.target_fps} FPS
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-gray-400 font-mono mt-0.5">
+                  Optical Flow AI Vector Synthesis
                 </div>
               </div>
             </div>
 
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={config.enable_frame_gen}
-                onChange={(e) => update({ enable_frame_gen: e.target.checked })}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
-            </label>
+            <div className="flex items-center space-x-2.5" onClick={(e) => e.stopPropagation()}>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.enable_frame_gen}
+                  onChange={(e) => update({ enable_frame_gen: e.target.checked })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+              </label>
+
+              <button
+                type="button"
+                onClick={() => toggleStage('stage3')}
+                className="p-1 text-gray-400 hover:text-white rounded hover:bg-[#162438] transition-colors cursor-pointer"
+              >
+                {openStages.stage3 ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
-          {config.enable_frame_gen && (
+          {config.enable_frame_gen && openStages.stage3 && (
             <div className="px-4 pb-4 pt-1 border-t border-[#1b2a42] space-y-3 text-xs">
               <div>
                 <label className="block text-gray-400 mb-1">Target Framerate Synthesis</label>
@@ -1296,18 +1388,45 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
       )}
 
       {/* ================= STAGE 4: EXPORT DESTINATION & FORMAT ================= */}
-      <div className="bg-[#0c121e] border border-[#1b263b] rounded-xl p-3.5 space-y-3.5 text-xs">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2 text-gray-200 font-semibold">
-            <span className="w-2 h-2 rounded-full bg-[#76b900]"></span>
-            <span>Broadcast Output & Encoding Master</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">
-              Stage 4
-            </span>
+      <div className="bg-[#0c121e] border border-[#1b263b] rounded-xl transition-all duration-200">
+        <div
+          onClick={() => toggleStage('stage4')}
+          className="p-3.5 flex items-center justify-between cursor-pointer select-none group"
+        >
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center">
+              <FolderOpen className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2 text-gray-200 font-semibold">
+                <span className="group-hover:text-white text-sm">Encoding Master & Destination</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">
+                  Stage 4
+                </span>
+                {!openStages.stage4 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 font-mono border border-blue-500/20">
+                    {isVideo ? `${config.video_codec.toUpperCase()} • CQ${config.bitrate_cq}` : `${config.image_format} ${config.image_quality}%`}
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-gray-400 font-mono mt-0.5">
+                {isVideo ? (config.bit_depth_10bit ? '10-Bit HDR Master Stream' : '8-Bit SDR Stream') : 'Image Master Bitstream'}
+              </div>
+            </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => toggleStage('stage4')}
+            className="p-1 text-gray-400 hover:text-white rounded hover:bg-[#162438] transition-colors cursor-pointer"
+          >
+            {openStages.stage4 ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
         </div>
 
-        {/* Output Directory Path */}
+        {openStages.stage4 && (
+          <div className="px-4 pb-4 pt-1 border-t border-[#182436] space-y-3.5 text-xs">
+            {/* Output Directory Path */}
         <div>
           <label className="block text-gray-400 mb-1 font-medium">Destination Directory</label>
           <div className="flex items-center space-x-2">
@@ -1450,6 +1569,8 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
                 className="w-full accent-[#76b900] bg-gray-800 h-1.5 rounded-lg cursor-pointer mt-2"
               />
             </div>
+          </div>
+        )}
           </div>
         )}
       </div>

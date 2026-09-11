@@ -16,7 +16,7 @@ import type {
   AppPreferences,
   RenderHistoryItem,
 } from './types/pipeline';
-import { Sparkles, Square, CheckCircle2, FolderOpen, Save, Download, Info, Settings, Activity } from 'lucide-react';
+import { Sparkles, Square, CheckCircle2, FolderOpen, Save, Download, Info, Settings, Activity, ChevronDown, ChevronUp } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save, open } from '@tauri-apps/plugin-dialog';
@@ -104,6 +104,54 @@ export const App: React.FC = () => {
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [enhancedResult, setEnhancedResult] = useState<PipelineResult | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('Workstation ready. Import source media to begin.');
+  const [isTelemetryExpanded, setIsTelemetryExpanded] = useState<boolean>(false);
+
+  const handleSelectActiveMeta = (index: number) => {
+    if (index >= 0 && index < metadataList.length) {
+      setActiveMetaIndex(index);
+      setConfig((prev) => ({
+        ...prev,
+        input_path: metadataList[index].path,
+      }));
+      setStatusMessage(`Active media: ${metadataList[index].filename}`);
+    }
+  };
+
+  const handleRemoveMeta = (index: number) => {
+    const newMetas = metadataList.filter((_, i) => i !== index);
+    const newPaths = selectedPaths.filter((_, i) => i !== index);
+    const newBatch = batchItems.filter((_, i) => i !== index);
+    setMetadataList(newMetas);
+    setSelectedPaths(newPaths);
+    setBatchItems(newBatch);
+    const newActive = Math.max(0, Math.min(index, newMetas.length - 1));
+    setActiveMetaIndex(newActive);
+    if (newMetas[newActive]) {
+      setConfig((prev) => ({
+        ...prev,
+        input_path: newMetas[newActive].path,
+      }));
+    } else {
+      setConfig((prev) => ({
+        ...prev,
+        input_path: '',
+      }));
+      setEnhancedResult(null);
+    }
+  };
+
+  const handleClearAllMedia = () => {
+    setMetadataList([]);
+    setSelectedPaths([]);
+    setBatchItems([]);
+    setActiveMetaIndex(0);
+    setEnhancedResult(null);
+    setConfig((prev) => ({
+      ...prev,
+      input_path: '',
+    }));
+    setStatusMessage('Workstation cleared. Ready for new media.');
+  };
 
   // Modal Dialogs & Workstation State
   const [isPreferencesOpen, setIsPreferencesOpen] = useState<boolean>(false);
@@ -496,89 +544,131 @@ export const App: React.FC = () => {
           {/* Universal Dropzone */}
           <MediaDropzone
             onFilesSelected={handleFilesSelected}
+            metadataList={metadataList}
+            activeMetaIndex={activeMetaIndex}
+            onSelectIndex={handleSelectActiveMeta}
+            onRemoveIndex={handleRemoveMeta}
+            onClearAll={handleClearAllMedia}
             currentMeta={activeMeta}
             fileCount={selectedPaths.length}
           />
 
-          {/* Deep Pixel Intelligence Telemetry Card */}
+          {/* Deep Pixel Intelligence Telemetry Card with Collapsibility */}
           {activeMeta?.pixel_telemetry && (
-            <div className="bg-[#0b101c] border border-fuchsia-900/40 rounded-xl p-3 space-y-2.5 font-mono shadow-md">
-              <div className="flex items-center justify-between border-b border-[#1b253b] pb-2">
+            <div className="bg-[#0b101c] border border-fuchsia-900/40 rounded-xl p-3 space-y-2.5 font-mono shadow-md transition-all">
+              <div
+                onClick={() => setIsTelemetryExpanded((prev) => !prev)}
+                className="flex items-center justify-between cursor-pointer select-none"
+              >
                 <div className="flex items-center space-x-1.5">
                   <Activity className="w-3.5 h-3.5 text-[#76b900]" />
                   <span className="text-[11px] font-bold text-gray-200 uppercase tracking-wider">Deep Pixel Intelligence</span>
                 </div>
-                <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                  activeMeta.pixel_telemetry.detected_type.includes('Anime')
-                    ? 'bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-500/50 shadow-sm shadow-fuchsia-950'
-                    : 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-950'
-                }`}>
-                  {activeMeta.pixel_telemetry.detected_type} ({(Math.max(activeMeta.pixel_telemetry.anime_score, activeMeta.pixel_telemetry.photoreal_score) * 100).toFixed(0)}%)
+
+                <div className="flex items-center space-x-2">
+                  <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                    activeMeta.pixel_telemetry.detected_type.includes('Anime')
+                      ? 'bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-500/50 shadow-sm shadow-fuchsia-950'
+                      : 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-950'
+                  }`}>
+                    {activeMeta.pixel_telemetry.detected_type} ({(Math.max(activeMeta.pixel_telemetry.anime_score, activeMeta.pixel_telemetry.photoreal_score) * 100).toFixed(0)}%)
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsTelemetryExpanded((prev) => !prev);
+                    }}
+                    className="p-1 text-gray-400 hover:text-white rounded hover:bg-[#162438] transition-colors"
+                  >
+                    {isTelemetryExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
               </div>
 
-              {/* Real-time Spectrum Matrix */}
-              <div className="grid grid-cols-2 gap-1.5 text-[10px] bg-[#070b14] p-2 rounded-lg border border-[#162238]">
-                <div className="flex justify-between items-center pr-1">
-                  <span className="text-gray-400">Peak Luma:</span>
-                  <span className="text-[#76b900] font-bold">{activeMeta.pixel_telemetry.peak_luminance_nits.toFixed(0)} Nits</span>
+              {/* Quick Summary Pill & Auto-Tune in Compact Mode */}
+              {!isTelemetryExpanded && (
+                <div className="flex items-center justify-between text-[10px] pt-0.5 border-t border-[#162238] mt-1">
+                  <span className="text-gray-400 truncate max-w-[200px]">
+                    Peak: <strong className="text-[#76b900]">{activeMeta.pixel_telemetry.peak_luminance_nits.toFixed(0)}N</strong> • {activeMeta.pixel_telemetry.dynamic_range_db.toFixed(0)}dB
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAutoTuneRealism}
+                    className="px-2 py-0.5 bg-[#16271c] hover:bg-[#203c29] text-[#76b900] hover:text-[#9af300] border border-[#76b900]/40 rounded text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <Sparkles className="w-2.5 h-2.5 text-[#76b900]" />
+                    <span>⚡ Auto-Tune</span>
+                  </button>
                 </div>
-                <div className="flex justify-between items-center pl-1">
-                  <span className="text-gray-400">Dynamic Range:</span>
-                  <span className="text-cyan-300 font-bold">{activeMeta.pixel_telemetry.dynamic_range_db.toFixed(1)} dB</span>
-                </div>
-                <div className="flex justify-between items-center pr-1">
-                  <span className="text-gray-400">Detail Entropy:</span>
-                  <span className="text-purple-300 font-bold">{activeMeta.pixel_telemetry.detail_entropy.toFixed(2)} b/px</span>
-                </div>
-                <div className="flex justify-between items-center pl-1">
-                  <span className="text-gray-400">Micro-Contrast:</span>
-                  <span className="text-[#76b900] font-bold">{(activeMeta.pixel_telemetry.micro_contrast_index * 100).toFixed(0)}%</span>
-                </div>
-                <div className="flex justify-between items-center pr-1">
-                  <span className="text-gray-400">Cel Flatness:</span>
-                  <span className="text-amber-300 font-bold">{(activeMeta.pixel_telemetry.flat_region_ratio * 100).toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between items-center pl-1">
-                  <span className="text-gray-400">Outlines:</span>
-                  <span className="text-fuchsia-300 font-bold">{(activeMeta.pixel_telemetry.outline_density * 100).toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between items-center pr-1">
-                  <span className="text-gray-400">Skin Dermal:</span>
-                  <span className="text-rose-300 font-bold">{(activeMeta.pixel_telemetry.skin_tone_ratio * 100).toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between items-center pl-1">
-                  <span className="text-gray-400">Banding Step:</span>
-                  <span className="text-amber-400 font-bold">{(activeMeta.pixel_telemetry.color_banding_index * 100).toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between items-center pr-1">
-                  <span className="text-gray-400">White Balance:</span>
-                  <span className="text-cyan-200 font-bold">{activeMeta.pixel_telemetry.color_temperature_kelvin}K</span>
-                </div>
-                <div className="flex justify-between items-center pl-1">
-                  <span className="text-gray-400">Hyper-Real Fit:</span>
-                  <span className="text-emerald-400 font-bold">{(activeMeta.pixel_telemetry.hyper_real_score * 100).toFixed(0)}%</span>
-                </div>
-              </div>
+              )}
 
-              {/* Auto-Tune One-Click Button */}
-              <div className="flex items-center justify-between pt-0.5">
-                <span className="text-[10px] text-gray-400">
-                  Optimal: <span className="text-white font-bold">{activeMeta.pixel_telemetry.recommended_mode === 'anime_to_real' ? '🎨 Anime ➔ Real' : '💎 Real ➔ Hyper Real'}</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleAutoTuneRealism}
-                  className="px-2.5 py-1 bg-[#16271c] hover:bg-[#203c29] text-[#76b900] hover:text-[#9af300] border border-[#76b900]/40 rounded-lg text-[10px] font-bold transition-all shadow-sm shadow-[#76b900]/10 cursor-pointer flex items-center gap-1.5"
-                >
-                  <Sparkles className="w-3 h-3 text-[#76b900]" />
-                  <span>⚡ Auto-Tune DLSS 5</span>
-                </button>
-              </div>
+              {/* Full Spectrum Matrix when Expanded */}
+              {isTelemetryExpanded && (
+                <>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] bg-[#070b14] p-2 rounded-lg border border-[#162238]">
+                    <div className="flex justify-between items-center pr-1">
+                      <span className="text-gray-400">Peak Luma:</span>
+                      <span className="text-[#76b900] font-bold">{activeMeta.pixel_telemetry.peak_luminance_nits.toFixed(0)} Nits</span>
+                    </div>
+                    <div className="flex justify-between items-center pl-1">
+                      <span className="text-gray-400">Dynamic Range:</span>
+                      <span className="text-cyan-300 font-bold">{activeMeta.pixel_telemetry.dynamic_range_db.toFixed(1)} dB</span>
+                    </div>
+                    <div className="flex justify-between items-center pr-1">
+                      <span className="text-gray-400">Detail Entropy:</span>
+                      <span className="text-purple-300 font-bold">{activeMeta.pixel_telemetry.detail_entropy.toFixed(2)} b/px</span>
+                    </div>
+                    <div className="flex justify-between items-center pl-1">
+                      <span className="text-gray-400">Micro-Contrast:</span>
+                      <span className="text-[#76b900] font-bold">{(activeMeta.pixel_telemetry.micro_contrast_index * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="flex justify-between items-center pr-1">
+                      <span className="text-gray-400">Cel Flatness:</span>
+                      <span className="text-amber-300 font-bold">{(activeMeta.pixel_telemetry.flat_region_ratio * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between items-center pl-1">
+                      <span className="text-gray-400">Outlines:</span>
+                      <span className="text-fuchsia-300 font-bold">{(activeMeta.pixel_telemetry.outline_density * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between items-center pr-1">
+                      <span className="text-gray-400">Skin Dermal:</span>
+                      <span className="text-rose-300 font-bold">{(activeMeta.pixel_telemetry.skin_tone_ratio * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between items-center pl-1">
+                      <span className="text-gray-400">Banding Step:</span>
+                      <span className="text-amber-400 font-bold">{(activeMeta.pixel_telemetry.color_banding_index * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between items-center pl-1">
+                      <span className="text-gray-400">White Balance:</span>
+                      <span className="text-cyan-200 font-bold">{activeMeta.pixel_telemetry.color_temperature_kelvin}K</span>
+                    </div>
+                    <div className="flex justify-between items-center pl-1">
+                      <span className="text-gray-400">Hyper-Real Fit:</span>
+                      <span className="text-emerald-400 font-bold">{(activeMeta.pixel_telemetry.hyper_real_score * 100).toFixed(0)}%</span>
+                    </div>
+                  </div>
+
+                  {/* Auto-Tune One-Click Button */}
+                  <div className="flex items-center justify-between pt-0.5">
+                    <span className="text-[10px] text-gray-400">
+                      Optimal: <span className="text-white font-bold">{activeMeta.pixel_telemetry.recommended_mode === 'anime_to_real' ? '🎨 Anime ➔ Real' : '💎 Real ➔ Hyper Real'}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleAutoTuneRealism}
+                      className="px-2.5 py-1 bg-[#16271c] hover:bg-[#203c29] text-[#76b900] hover:text-[#9af300] border border-[#76b900]/40 rounded-lg text-[10px] font-bold transition-all shadow-sm shadow-[#76b900]/10 cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-3 h-3 text-[#76b900]" />
+                      <span>⚡ Auto-Tune DLSS 5</span>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
-
-
+          
           {/* Multi-Stage Visual Node Configuration */}
           <PipelineStages
             config={config}
@@ -591,39 +681,40 @@ export const App: React.FC = () => {
         {/* ================= RIGHT PANE: INTERACTIVE VIEWPORT & TELEMETRY ================= */}
         <div className="flex-1 flex flex-col space-y-3 overflow-hidden">
           {/* Master Action Bar */}
-          <div className="bg-[#0c121e] border border-[#1b263b] rounded-xl p-3 flex items-center justify-between shadow-md">
-            <div className="flex items-center space-x-3">
-              {processing ? (
-                <button
-                  type="button"
-                  onClick={handleStopPipeline}
-                  className="px-5 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center space-x-2 transition-colors shadow-lg shadow-rose-600/20 cursor-pointer"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                  <span>ABORT</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleRunPipeline}
-                  disabled={metadataList.length === 0}
-                  className={`px-6 py-2.5 rounded-lg font-bold text-xs flex items-center space-x-2 transition-all duration-200 ${
-                    metadataList.length > 0
-                      ? 'bg-[#76b900] hover:bg-[#85ce00] text-black shadow-lg shadow-[#76b900]/25 cursor-pointer'
-                      : 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                  }`}
-                >
-                  <Sparkles className="w-4 h-4 fill-current" />
-                  <span>MASTER & RENDER</span>
-                </button>
-              )}
+          <div className="bg-[#0c121e] border border-[#1b263b] rounded-xl p-3 flex flex-col space-y-2.5 shadow-md">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                {processing ? (
+                  <button
+                    type="button"
+                    onClick={handleStopPipeline}
+                    className="px-5 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center space-x-2 transition-colors shadow-lg shadow-rose-600/20 cursor-pointer"
+                  >
+                    <Square className="w-4 h-4 fill-current" />
+                    <span>ABORT</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleRunPipeline}
+                    disabled={metadataList.length === 0}
+                    className={`px-6 py-2.5 rounded-lg font-bold text-xs flex items-center space-x-2 transition-all duration-200 ${
+                      metadataList.length > 0
+                        ? 'bg-[#76b900] hover:bg-[#85ce00] text-black shadow-lg shadow-[#76b900]/25 cursor-pointer'
+                        : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                    }`}
+                  >
+                    <Sparkles className="w-4 h-4 fill-current" />
+                    <span>MASTER & RENDER</span>
+                  </button>
+                )}
 
-              <div className="text-xs text-gray-400 font-mono truncate max-w-md">
-                <span>{statusMessage}</span>
+                <div className="text-xs text-gray-400 font-mono truncate max-w-md">
+                  <span>{statusMessage}</span>
+                </div>
               </div>
-            </div>
 
-            <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2">
               {activeMeta && (
                 <button
                   type="button"
@@ -669,6 +760,26 @@ export const App: React.FC = () => {
                 </>
               )}
             </div>
+          </div>
+          {/* Live Progress Bar during execution */}
+          {processing && currentProgress && (
+            <div className="bg-[#0b101c] border border-cyan-500/30 rounded-xl p-2.5 flex flex-col space-y-1 font-mono text-[11px] shadow-md">
+              <div className="flex items-center justify-between text-gray-300">
+                <div className="flex items-center space-x-2 text-cyan-400">
+                  <Activity className="w-3.5 h-3.5 animate-spin" />
+                  <span className="font-bold">{currentProgress.stage}</span>
+                  <span className="text-gray-400">• {currentProgress.message}</span>
+                </div>
+                <span className="text-[#76b900] font-bold">{(currentProgress.progress * 100).toFixed(0)}%</span>
+              </div>
+              <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden border border-[#1b263b]">
+                <div
+                  className="bg-gradient-to-r from-cyan-500 via-[#76b900] to-emerald-400 h-full transition-all duration-200"
+                  style={{ width: `${Math.max(2, currentProgress.progress * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
           </div>
 
           {/* Result Telemetry Banner */}
@@ -716,6 +827,7 @@ export const App: React.FC = () => {
               onViewModeChange={setViewMode}
               isLoupeActive={isLoupeActive}
               onToggleLoupe={() => setIsLoupeActive((prev) => !prev)}
+              onBrowseMedia={handlePickFiles}
               targetResolutionTag={
                 config.enable_upscale
                   ? (config.target_resolution === '4k'
@@ -736,6 +848,28 @@ export const App: React.FC = () => {
           <BatchQueue
             items={batchItems}
             historyItems={historyItems}
+            activeItemIndex={activeMetaIndex}
+            onSelectItem={handleSelectActiveMeta}
+            onRemoveItem={handleRemoveMeta}
+            onClearCompleted={() => setBatchItems((prev) => prev.filter((item) => item.status !== 'done'))}
+            onClearHistory={() => {
+              setHistoryItems([]);
+              try {
+                localStorage.removeItem('dlss5_render_history');
+              } catch {}
+              setStatusMessage('Render history cleared.');
+            }}
+            onPreviewHistory={(item) => {
+              setEnhancedResult({
+                input_path: item.inputPath,
+                output_path: item.outputPath,
+                input_resolution: 'Source Master',
+                output_resolution: item.resolution,
+                elapsed_seconds: item.elapsedSeconds,
+                stages_run: item.stages,
+              });
+              setStatusMessage(`Previewing master render: ${item.filename} (${item.resolution})`);
+            }}
             onOpenFolder={handleRevealOutput}
             onExportAs={handleExportAs}
           />
