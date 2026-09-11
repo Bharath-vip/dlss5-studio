@@ -26,10 +26,25 @@ Unlike cloud-based tools or browser wrappers, DLSS 5 Studio runs entirely on you
 ## Key Features
 
 ### AI Processing Pipeline
-- **DLSS 5 Neural Reconstruction (Stage 1)** — Full-resolution AI image reconstruction using NVIDIA DLSS 5 SDK. Supports Cinematic, Ultra Quality, and Balanced presets with per-frame grain synthesis and color strength controls.
-- **RTX Video Super Resolution (Stage 2)** — Hardware-accelerated 1x to 4x spatial upscaling via NVIDIA RTX VSR SDK. Quality levels 1–4.
-- **DLSS-G Frame Generation (Stage 3)** — Temporal motion-estimated frame synthesis targeting 60, 120, 2x or 4x source FPS.
-- **NVIDIA NVENC Export (Stage 4)** — HEVC H.265, AV1, or H.264 hardware-encoded output with Constant Quality CQP rate control (CQ 16 Archival → CQ 28 Streaming), AAC 256kbps audio or Direct Bitstream Passthrough, and Temporal Film Grain Synthesis.
+- **DLSS 5 Neural Reconstruction & ReShade Suite (Stage 1)** — Full-resolution AI image reconstruction using NVIDIA DLSS 5 SDK. Integrated RenoDX optics (Local Tone, Local Structure, Skin Texture Preservation, Diffuse White up to 1000 Nits, Auto Motion Masking, UI Protection) and ReShade post-processing shaders:
+  - **Contrast Adaptive Sharpening (CAS)**: FidelityFX edge-aware micro-contrast
+  - **Clarity / High-Pass Detail**: Sub-pixel micro-contrast enhancement
+  - **Cinematic Highlight Bloom**: Organic highlight light bleed simulation
+  - **Chromatic Aberration**: Optical lens edge color dispersion
+  - **Vignette Shading**: Anamorphic corner lens light falloff
+  - **Gradient Debanding / Dither**: Eliminates color banding on sky/dark gradients
+  - **Tonemapping Curves**: RenoDRT Studio, ACES Filmic, AgX Cinematic, Neutral Linear
+  - **DLSS Ray Reconstruction (DLSS-RR)**: AI neural denoiser for path-traced lighting
+- **Super Resolution & 4K / 8K Targets (Stage 2)** — Hardware-accelerated upscaling targeting:
+  - **4K Ultra HD (3840 × 2160 - 2160p UHD)** ⭐
+  - **Cinema 4K DCI (4096 × 2160)**
+  - **Quad HD 1440p (2560 × 1440)**
+  - **Full HD 1080p (1920 × 1080)**
+  - **8K Super UHD (7680 × 4320)**
+  - **Custom Dimensions & Multipliers (1.25× – 4.0×)**
+  - **NVIDIA RTX Video TrueHDR**: SDR to HDR10 neural inverse tonemapping with peak luminance up to 2000 nits
+- **DLSS-G Optical Flow Frame Generation (Stage 3)** — Temporal motion-estimated frame synthesis targeting 60, 120, 2x or 4x source FPS.
+- **NVIDIA NVENC 10-bit HDR Export (Stage 4)** — HEVC H.265 (Main 10), AV1, or H.264 hardware-encoded output with Constant Quality CQP rate control (CQ 16 Archival → CQ 28 Streaming), Full/Limited Color Range, AAC 256kbps audio or Direct Bitstream Passthrough, and Temporal Film Grain Synthesis.
 
 ### Interactive Workstation Viewport
 | Feature | Description |

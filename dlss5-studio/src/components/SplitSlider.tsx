@@ -28,6 +28,7 @@ interface SplitSliderProps {
   onViewModeChange?: (mode: ViewMode) => void;
   isLoupeActive?: boolean;
   onToggleLoupe?: () => void;
+  targetResolutionTag?: string;
 }
 
 /**
@@ -99,6 +100,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
   onViewModeChange,
   isLoupeActive: controlledLoupeActive,
   onToggleLoupe: controlledOnToggleLoupe,
+  targetResolutionTag,
 }) => {
   const [normOriginal, setNormOriginal] = useState<string>('');
   const [normEnhanced, setNormEnhanced] = useState<string>('');
@@ -431,6 +433,13 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
 
         {/* Zoom, Loupe & Inspection Controls */}
         <div className="flex items-center space-x-2">
+          {targetResolutionTag && (
+            <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-md bg-[#76b900]/10 border border-[#76b900]/30 text-[#76b900] text-[11px] font-bold font-mono tracking-wider shadow-sm shadow-[#76b900]/10">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#76b900] animate-pulse"></span>
+              <span>{targetResolutionTag}</span>
+            </div>
+          )}
+
           {/* 4x Loupe Toggle */}
           <button
             type="button"

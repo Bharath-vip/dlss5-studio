@@ -43,11 +43,27 @@ const defaultPipelineConfig: PipelineConfig = {
     depth_mode: 0,
     mvec_scale_x: 1.0,
     mvec_scale_y: 1.0,
+    cas_sharpening: 0.0,
+    clarity: 0.0,
+    bloom_threshold: 0.0,
+    chroma_aberration: 0.0,
+    vignette: 0.0,
+    deband: 0,
+    tonemapper: 0,
+    ray_reconstruction: false,
   },
   enable_upscale: false,
   upscale_engine: 'DLSS Super Resolution',
-  upscale_factor: 1.5,
+  target_resolution: '4k',
+  upscale_factor: 2.0,
+  custom_width: 3840,
+  custom_height: 2160,
   vsr_quality: 4,
+  enable_rtx_hdr: false,
+  rtx_hdr_contrast: 100,
+  rtx_hdr_saturation: 100,
+  rtx_hdr_middle_gray: 18,
+  rtx_hdr_peak_nits: 1000,
   enable_frame_gen: false,
   target_fps: '60',
   video_codec: 'hevc_nvenc',
@@ -55,6 +71,8 @@ const defaultPipelineConfig: PipelineConfig = {
   bitrate_cq: 24,
   audio_codec: 'aac',
   film_grain: 0,
+  bit_depth_10bit: false,
+  color_range: 'full',
   image_format: 'PNG',
   image_quality: 95,
 };
@@ -389,6 +407,7 @@ export const App: React.FC = () => {
             config={config}
             onChange={setConfig}
             isVideo={activeMeta ? activeMeta.is_video : true}
+            metadata={activeMeta}
           />
         </div>
 
@@ -520,6 +539,19 @@ export const App: React.FC = () => {
               onViewModeChange={setViewMode}
               isLoupeActive={isLoupeActive}
               onToggleLoupe={() => setIsLoupeActive((prev) => !prev)}
+              targetResolutionTag={
+                config.enable_upscale
+                  ? (config.target_resolution === '4k'
+                      ? '4K UHD MASTER'
+                      : config.target_resolution === 'cinema_4k'
+                      ? 'CINEMA 4K'
+                      : config.target_resolution === '8k'
+                      ? '8K UHD'
+                      : config.target_resolution === '1440p'
+                      ? '1440p QHD'
+                      : `${config.upscale_factor}× UPSCALE`)
+                  : 'DLSS 5 NATIVE'
+              }
             />
           </div>
 

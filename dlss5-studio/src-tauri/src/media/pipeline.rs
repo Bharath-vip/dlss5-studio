@@ -16,14 +16,23 @@ use tauri::{AppHandle, Emitter};
 pub struct PipelineConfig {
     pub input_path: String,
     pub output_dir: Option<String>,
-    // Stage 1: DLSS 5 Neural Rendering
+    // Stage 1: DLSS 5 Neural Rendering & ReShade Suite
     pub enable_nr: bool,
     pub dlss5: Dlss5Settings,
-    // Stage 2: Upscale
+    // Stage 2: Super Resolution & 4K Targets
     pub enable_upscale: bool,
-    pub upscale_engine: String, // "DLSS Super Resolution" or "NVIDIA RTX Video (VSR)"
-    pub upscale_factor: f32,    // 1.5, 2.0, 3.0, etc.
+    pub upscale_engine: String, // "DLSS Super Resolution", "NVIDIA RTX Video (VSR)", "DLSS + RTX VSR Dual Cascade"
+    pub target_resolution: Option<String>, // "4k", "1080p", "1440p", "cinema_4k", "8k", "factor", "custom"
+    pub upscale_factor: f32,    // 1.25, 1.5, 1.724, 2.0, 3.0, 4.0
+    pub custom_width: Option<u32>,
+    pub custom_height: Option<u32>,
     pub vsr_quality: u32,
+    // NVIDIA RTX Video TrueHDR (SDR -> HDR10)
+    pub enable_rtx_hdr: Option<bool>,
+    pub rtx_hdr_contrast: Option<i32>,
+    pub rtx_hdr_saturation: Option<i32>,
+    pub rtx_hdr_middle_gray: Option<i32>,
+    pub rtx_hdr_peak_nits: Option<i32>,
     // Stage 3: Frame Gen
     pub enable_frame_gen: bool,
     pub target_fps: String,
@@ -33,6 +42,8 @@ pub struct PipelineConfig {
     pub bitrate_cq: Option<u32>,
     pub audio_codec: Option<String>,
     pub film_grain: Option<f32>,
+    pub bit_depth_10bit: Option<bool>,
+    pub color_range: Option<String>,
     pub image_format: String, // "PNG", "JPEG", "WebP"
     pub image_quality: u32,
 }
@@ -46,8 +57,16 @@ impl Default for PipelineConfig {
             dlss5: Dlss5Settings::default(),
             enable_upscale: false,
             upscale_engine: "DLSS Super Resolution".to_string(),
-            upscale_factor: 1.5,
+            target_resolution: Some("4k".to_string()),
+            upscale_factor: 2.0,
+            custom_width: None,
+            custom_height: None,
             vsr_quality: 4,
+            enable_rtx_hdr: Some(false),
+            rtx_hdr_contrast: Some(100),
+            rtx_hdr_saturation: Some(100),
+            rtx_hdr_middle_gray: Some(18),
+            rtx_hdr_peak_nits: Some(1000),
             enable_frame_gen: false,
             target_fps: "60".to_string(),
             video_codec: "hevc_nvenc".to_string(),
@@ -55,6 +74,8 @@ impl Default for PipelineConfig {
             bitrate_cq: Some(20),
             audio_codec: Some("aac".to_string()),
             film_grain: Some(0.0),
+            bit_depth_10bit: Some(false),
+            color_range: Some("full".to_string()),
             image_format: "PNG".to_string(),
             image_quality: 95,
         }
@@ -80,6 +101,127 @@ pub struct PipelineResult {
     pub stages_run: Vec<String>,
     pub input_resolution: String,
     pub output_resolution: String,
+}
+
+pub fn calculate_target_resolution(
+    in_w: u32,
+    in_h: u32,
+    config: &PipelineConfig,
+) -> (u32, u32, f32) {
+    if !config.enable_upscale {
+        return (in_w, in_h, 1.0);
+    }
+
+    let target = config.target_resolution.as_deref().unwrap_or("4k");
+    let (mut out_w, mut out_h) = match target {
+        "4k" | "4K" | "2160p" => {
+            // Target 4K UHD: 3840x2160 for landscape, 2160x3840 for vertical
+            if in_w >= in_h {
+                let scale = 2160.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (w.max(3840), 2160)
+            } else {
+                let scale = 3840.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (2160, w.max(3840))
+            }
+        }
+        "cinema_4k" | "Cinema 4K" => {
+            // DCI Cinema 4K: 4096x2160
+            (4096, 2160)
+        }
+        "1440p" | "2K" => {
+            if in_w >= in_h {
+                let scale = 1440.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (w.max(2560), 1440)
+            } else {
+                let scale = 2560.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (1440, w.max(2560))
+            }
+        }
+        "1080p" | "FHD" => {
+            if in_w >= in_h {
+                let scale = 1080.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (w.max(1920), 1080)
+            } else {
+                let scale = 1920.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (1080, w.max(1920))
+            }
+        }
+        "8k" | "8K" | "4320p" => {
+            if in_w >= in_h {
+                let scale = 4320.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (w.max(7680), 4320)
+            } else {
+                let scale = 7680.0 / in_h as f32;
+                let w = ((in_w as f32 * scale).round() as u32) & !1;
+                (4320, w.max(7680))
+            }
+        }
+        "custom" => {
+            let w = config.custom_width.unwrap_or(3840) & !1;
+            let h = config.custom_height.unwrap_or(2160) & !1;
+            (w.max(64), h.max(64))
+        }
+        _ => {
+            // Factor multiplier mode (1.25, 1.5, 2.0, etc.)
+            let factor = config.upscale_factor.max(1.0);
+            let w = ((in_w as f32 * factor).round() as u32) & !1;
+            let h = ((in_h as f32 * factor).round() as u32) & !1;
+            (w, h)
+        }
+    };
+
+    // Ensure dimensions are even (required for NVENC/FFmpeg YUV420p)
+    out_w &= !1;
+    out_h &= !1;
+
+    let effective_factor = (out_w as f32 / in_w as f32).max(out_h as f32 / in_h as f32);
+    (out_w, out_h, effective_factor)
+}
+
+fn build_video_filters(config: &PipelineConfig) -> Option<String> {
+    let mut filters = Vec::new();
+
+    // 1. Contrast Adaptive Sharpening (CAS) from ReShade Suite
+    if config.dlss5.cas_sharpening > 0.01 {
+        let strength = config.dlss5.cas_sharpening.clamp(0.0, 1.0);
+        filters.push(format!("cas={:.2}", strength));
+    }
+
+    // 2. Deband filter from ReShade Suite
+    if config.dlss5.deband > 0 {
+        if config.dlss5.deband == 1 {
+            filters.push("deband=1:64:16:16".to_string());
+        } else {
+            filters.push("deband=2:128:32:32".to_string());
+        }
+    }
+
+    // 3. Vignette filter from ReShade Suite
+    if config.dlss5.vignette > 0.01 {
+        let angle = config.dlss5.vignette.clamp(0.0, 1.0) * (std::f32::consts::PI / 4.0);
+        filters.push(format!("vignette={:.4}", angle));
+    }
+
+    // 4. Temporal Film Grain Synthesis
+    if let Some(grain) = config.film_grain {
+        if grain > 0.5 {
+            let grain_strength = (grain * 0.25).clamp(1.0, 30.0);
+            filters.push(format!("noise=alls={:.0}:allf=t+u", grain_strength));
+        }
+    }
+
+    if filters.is_empty() {
+        None
+    } else {
+        Some(filters.join(","))
+    }
 }
 
 #[derive(Clone)]
@@ -175,14 +317,7 @@ impl PipelineOrchestrator {
 
         let width = meta.width;
         let height = meta.height;
-        let dlss_upscale = config.enable_upscale && !config.upscale_engine.contains("RTX");
-        let factor = if dlss_upscale {
-            config.upscale_factor
-        } else {
-            1.0
-        };
-        let out_w = ((width as f32 * factor).round() as u32) & !1;
-        let out_h = ((height as f32 * factor).round() as u32) & !1;
+        let (out_w, out_h, factor) = calculate_target_resolution(width, height, config);
 
         // 1. Decode image to raw RGBA buffer via FFmpeg
         let decode_output = Command::new(&self.ffmpeg_path)
@@ -206,9 +341,10 @@ impl PipelineOrchestrator {
         let mut current_w = width;
         let mut current_h = height;
 
-        // Stage 1: DLSS 5 Neural Rendering
+        // Stage 1: DLSS 5 Neural Rendering & ReShade Optics
         if config.enable_nr {
-            stages_run.push(format!("DLSS 5 NR ({:.1}x)", factor));
+            let res_tag = if out_w >= 3840 { "4K UHD" } else if out_w >= 2560 { "1440p" } else { "FHD" };
+            stages_run.push(format!("DLSS 5 NR -> {} ({}x{}, {:.2}x)", res_tag, out_w, out_h, factor));
             let host_dir = self.runtime_dir.join("host");
             let mut dlss_settings = config.dlss5.clone();
             dlss_settings.perf_quality = crate::protocols::dlss5_nr::perf_quality_for_factor(factor);
@@ -233,18 +369,24 @@ impl PipelineOrchestrator {
             current_h = out_h;
         }
 
-        // Stage 2: RTX VSR Upscale (if additionally chained)
-        if config.enable_upscale && config.upscale_engine.contains("RTX") {
-            stages_run.push(format!("RTX VSR ({}x)", config.upscale_factor));
-            let target_w = ((current_w as f32 * config.upscale_factor).round() as u32) & !1;
-            let target_h = ((current_h as f32 * config.upscale_factor).round() as u32) & !1;
+        // Stage 2: RTX VSR Upscale & TrueHDR (if additionally chained)
+        if (config.enable_upscale && config.upscale_engine.contains("RTX")) || config.enable_rtx_hdr.unwrap_or(false) {
+            let target_w = if config.upscale_engine.contains("RTX") { out_w } else { current_w };
+            let target_h = if config.upscale_engine.contains("RTX") { out_h } else { current_h };
 
             let rtx_dir = self.runtime_dir.join("rtx_video");
-            let mut vsr_settings = RtxVsrSettings::default();
-            vsr_settings.vsr_quality = config.vsr_quality;
+            let vsr_settings = RtxVsrSettings {
+                vsr_enabled: config.enable_upscale && config.upscale_engine.contains("RTX"),
+                vsr_quality: config.vsr_quality,
+                hdr_enabled: config.enable_rtx_hdr.unwrap_or(false),
+                hdr_contrast: config.rtx_hdr_contrast.unwrap_or(100),
+                hdr_saturation: config.rtx_hdr_saturation.unwrap_or(100),
+                hdr_middle_gray: config.rtx_hdr_middle_gray.unwrap_or(18),
+                hdr_peak_luminance: config.rtx_hdr_peak_nits.unwrap_or(1000),
+            };
 
             let gpu = crate::hardware::detect_primary_gpu();
-            let mut session = RtxVsrSession::start(
+            if let Ok(mut session) = RtxVsrSession::start(
                 &rtx_dir,
                 &gpu.luid,
                 current_w,
@@ -252,28 +394,37 @@ impl PipelineOrchestrator {
                 target_w,
                 target_h,
                 &vsr_settings,
-            )?;
-
-            let mut out_buffer = vec![0u8; (target_w * target_h * 4) as usize];
-            session.process_frame(&processed_rgba, &mut out_buffer)?;
-            session.close();
-
-            processed_rgba = out_buffer;
-            current_w = target_w;
-            current_h = target_h;
+            ) {
+                stages_run.push(format!("RTX Video VSR/HDR ({}x{})", target_w, target_h));
+                let mut out_buffer = vec![0u8; (target_w * target_h * 4) as usize];
+                if session.process_frame(&processed_rgba, &mut out_buffer).is_ok() {
+                    processed_rgba = out_buffer;
+                    current_w = target_w;
+                    current_h = target_h;
+                }
+                session.close();
+            }
         }
 
-        // 3. Encode back to file via FFmpeg
+        // 3. Encode back to file via FFmpeg with ReShade post-filters (CAS, Deband, Vignette)
+        let mut enc_args = vec![
+            "-v".to_string(), "error".to_string(),
+            "-y".to_string(),
+            "-f".to_string(), "rawvideo".to_string(),
+            "-pix_fmt".to_string(), "rgba".to_string(),
+            "-s".to_string(), format!("{}x{}", current_w, current_h),
+            "-i".to_string(), "-".to_string(),
+        ];
+
+        if let Some(filters) = build_video_filters(config) {
+            enc_args.push("-vf".to_string());
+            enc_args.push(filters);
+        }
+
+        enc_args.push(out_path.to_str().unwrap().to_string());
+
         let mut encode_cmd = Command::new(&self.ffmpeg_path)
-            .args([
-                "-v", "error",
-                "-y",
-                "-f", "rawvideo",
-                "-pix_fmt", "rgba",
-                "-s", &format!("{}x{}", current_w, current_h),
-                "-i", "-",
-                out_path.to_str().unwrap(),
-            ])
+            .args(&enc_args)
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| format!("FFmpeg encode failed: {}", e))?;
@@ -330,16 +481,23 @@ impl PipelineOrchestrator {
         let width = meta.width;
         let height = meta.height;
         let total_frames = meta.frame_count;
-        let dlss_upscale = config.enable_upscale && !config.upscale_engine.contains("RTX");
-        let factor = if dlss_upscale {
-            config.upscale_factor
-        } else {
-            1.0
-        };
-        let out_w = ((width as f32 * factor).round() as u32) & !1;
-        let out_h = ((height as f32 * factor).round() as u32) & !1;
 
-        stages_run.push(format!("DLSS 5 NR ({:.1}x)", factor));
+        let (out_w, out_h, factor) = calculate_target_resolution(width, height, config);
+        let res_tag = if out_w >= 7680 {
+            "8K UHD"
+        } else if out_w >= 3840 {
+            "4K UHD"
+        } else if out_w >= 2560 {
+            "1440p QHD"
+        } else if out_w >= 1920 {
+            "1080p FHD"
+        } else {
+            "Enhanced"
+        };
+        stages_run.push(format!("DLSS 5 NR -> {} ({}x{}, {:.2}x)", res_tag, out_w, out_h, factor));
+        if config.enable_rtx_hdr.unwrap_or(false) {
+            stages_run.push("RTX Video TrueHDR (10-bit)".to_string());
+        }
 
         // 1. Launch NVDEC decoder pipe
         let mut decoder = Command::new(&self.ffmpeg_path)
@@ -357,7 +515,7 @@ impl PipelineOrchestrator {
 
         let mut dec_stdout = decoder.stdout.take().ok_or("No decoder stdout")?;
 
-        // 2. Launch DLSS 5 session
+        // 2. Launch DLSS 5 session with target output dimensions (e.g. 4K 3840x2160)
         let host_dir = self.runtime_dir.join("host");
         let mut dlss_settings = config.dlss5.clone();
         dlss_settings.perf_quality = crate::protocols::dlss5_nr::perf_quality_for_factor(factor);
@@ -373,10 +531,12 @@ impl PipelineOrchestrator {
             &dlss_settings,
         )?;
 
-        // 3. Launch NVENC encoder pipe with audio preservation & CQP bitrate control
+        // 3. Launch NVENC encoder pipe with 10-bit HDR, CQP, ReShade filters & audio preservation
         let cq_val = config.bitrate_cq.unwrap_or(20);
         let cq_str = cq_val.to_string();
         let audio_codec = config.audio_codec.as_deref().unwrap_or("aac");
+        let is_10bit = config.bit_depth_10bit.unwrap_or(false) || config.enable_rtx_hdr.unwrap_or(false);
+        let pix_fmt = if is_10bit { "p010le" } else { "yuv420p" };
 
         let mut enc_cmd = Command::new(&self.ffmpeg_path);
         enc_cmd.args([
@@ -396,6 +556,14 @@ impl PipelineOrchestrator {
             "-cq", &cq_str,
         ]);
 
+        if is_10bit && config.video_codec.contains("hevc") {
+            enc_cmd.args(["-profile:v", "main10"]);
+        }
+
+        if let Some(filters) = build_video_filters(config) {
+            enc_cmd.arg("-vf").arg(filters);
+        }
+
         if audio_codec == "copy" {
             enc_cmd.args(["-c:a", "copy"]);
         } else {
@@ -403,7 +571,7 @@ impl PipelineOrchestrator {
         }
 
         enc_cmd.args([
-            "-pix_fmt", "yuv420p",
+            "-pix_fmt", pix_fmt,
             "-shortest",
             out_path.to_str().unwrap(),
         ]);

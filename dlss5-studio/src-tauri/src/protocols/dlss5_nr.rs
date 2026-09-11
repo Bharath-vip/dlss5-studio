@@ -33,6 +33,15 @@ pub struct Dlss5Settings {
     pub depth_mode: u32,
     pub mvec_scale_x: f32,
     pub mvec_scale_y: f32,
+    // ReShade Shader Suite
+    pub cas_sharpening: f32,
+    pub clarity: f32,
+    pub bloom_threshold: f32,
+    pub chroma_aberration: f32,
+    pub vignette: f32,
+    pub deband: u32,
+    pub tonemapper: u32,
+    pub ray_reconstruction: bool,
 }
 
 impl Default for Dlss5Settings {
@@ -56,6 +65,14 @@ impl Default for Dlss5Settings {
             depth_mode: 0,
             mvec_scale_x: 1.0,
             mvec_scale_y: 1.0,
+            cas_sharpening: 0.0,
+            clarity: 0.0,
+            bloom_threshold: 0.0,
+            chroma_aberration: 0.0,
+            vignette: 0.0,
+            deband: 0,
+            tonemapper: 0,
+            ray_reconstruction: false,
         }
     }
 }
@@ -63,23 +80,22 @@ impl Default for Dlss5Settings {
 pub fn perf_quality_for_factor(factor: f32) -> u32 {
     if (factor - 1.0).abs() < 0.05 {
         5 // DLAA
-    } else if (factor - 1.5).abs() < 0.05 {
-        2 // Quality
-    } else if (factor - 1.724).abs() < 0.05 {
-        1 // Balanced
-    } else if (factor - 2.0).abs() < 0.05 {
-        0 // Performance
-    } else if (factor - 3.0).abs() < 0.05 {
-        3 // Ultra Performance
+    } else if factor <= 1.55 {
+        2 // Quality (1.5x)
+    } else if factor <= 1.85 {
+        1 // Balanced (1.724x)
+    } else if factor <= 2.2 {
+        0 // Performance (2.0x -> standard 1080p to 4K)
     } else {
-        5
+        3 // Ultra Performance (3.0x+ -> 720p to 4K or 1080p to 8K)
     }
 }
 
-pub fn sync_reshade_ini(host_dir: &Path, settings: &Dlss5Settings) -> io::Result<()> {
+pub fn sync_reshade_ini(host_dir: &Path, settings: &Dlss5Settings, is_upscaling: bool) -> io::Result<()> {
     let ini_path = host_dir.join("ReShade.ini");
     let content = format!(
-        "[ADDON]\nAddonPath=..\\dlssnr\n\n[RenoDX.DLSS5]\nEnableHooks=2\nNREnableUpscaling=0\nNRPreset={}\nNRStyle={}\nNRAutoMask={}\nNRUICorrection={}\nNRIntensity={:.4}\nNRLocalTone={:.4}\nNRLocalStructure={:.4}\nNRSkinStructure={:.4}\nNRGlobalTone={:.4}\nNRColorStrength={:.4}\nNRTransferStrength={:.4}\nNRDiffuseWhiteNits={:.4}\nNRPaperWhiteScale={:.4}\nNRDepthMode={}\nNRMVecScaleX={:.4}\nNRMVecScaleY={:.4}\n",
+        "[ADDON]\nAddonPath=..\\dlssnr\n\n[RenoDX.DLSS5]\nEnableHooks=2\nNREnableUpscaling={}\nNRPreset={}\nNRStyle={}\nNRAutoMask={}\nNRUICorrection={}\nNRIntensity={:.4}\nNRLocalTone={:.4}\nNRLocalStructure={:.4}\nNRSkinStructure={:.4}\nNRGlobalTone={:.4}\nNRColorStrength={:.4}\nNRTransferStrength={:.4}\nNRDiffuseWhiteNits={:.4}\nNRPaperWhiteScale={:.4}\nNRDepthMode={}\nNRMVecScaleX={:.4}\nNRMVecScaleY={:.4}\n\n[ReShade.DLSS5.Shaders]\nCASSharpening={:.4}\nClarity={:.4}\nBloomThreshold={:.4}\nChromaAberration={:.4}\nVignette={:.4}\nDeband={}\nTonemapper={}\nRayReconstruction={}\n",
+        if is_upscaling { 1 } else { 0 },
         settings.preset,
         settings.style,
         settings.auto_mask,
@@ -95,7 +111,15 @@ pub fn sync_reshade_ini(host_dir: &Path, settings: &Dlss5Settings) -> io::Result
         settings.paper_white_scale,
         settings.depth_mode,
         settings.mvec_scale_x,
-        settings.mvec_scale_y
+        settings.mvec_scale_y,
+        settings.cas_sharpening,
+        settings.clarity,
+        settings.bloom_threshold,
+        settings.chroma_aberration,
+        settings.vignette,
+        settings.deband,
+        settings.tonemapper,
+        if settings.ray_reconstruction { 1 } else { 0 },
     );
     fs::write(ini_path, content)
 }
@@ -121,7 +145,8 @@ impl Dlss5Session {
         warmup_frames: u32,
         settings: &Dlss5Settings,
     ) -> Result<Self, String> {
-        sync_reshade_ini(runtime_host_dir, settings)
+        let is_upscaling = output_width > input_width || output_height > input_height;
+        sync_reshade_ini(runtime_host_dir, settings, is_upscaling)
             .map_err(|e| format!("Failed to sync ReShade.ini: {}", e))?;
 
         let worker_bin = runtime_host_dir.join("nvngx.dll");
