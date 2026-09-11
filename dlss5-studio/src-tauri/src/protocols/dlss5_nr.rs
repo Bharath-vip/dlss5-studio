@@ -171,10 +171,17 @@ impl Dlss5Session {
         sync_reshade_ini(runtime_host_dir, settings, is_upscaling)
             .map_err(|e| format!("Failed to sync ReShade.ini: {}", e))?;
 
-        let worker_bin = runtime_host_dir.join("nvngx.dll");
-        if !worker_bin.exists() {
-            return Err(format!("Worker not found at: {:?}", worker_bin));
-        }
+        let worker_bin = runtime_host_dir.join("dlss5-worker.exe");
+        let worker_bin = if worker_bin.exists() {
+            worker_bin
+        } else {
+            let alt = runtime_host_dir.join("dlss5-feed-host.exe");
+            if alt.exists() {
+                alt
+            } else {
+                return Err("DLSS 5 host worker binary not found; using GPU shader and VSR cascade".into());
+            }
+        };
 
         let mut cmd = Command::new(&worker_bin);
         cmd.arg("--video");

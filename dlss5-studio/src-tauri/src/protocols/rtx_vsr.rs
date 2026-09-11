@@ -77,11 +77,13 @@ impl RtxVsrSession {
         header.write_u32::<LittleEndian>(height).unwrap();
         header.write_u32::<LittleEndian>(output_width).unwrap();
         header.write_u32::<LittleEndian>(output_height).unwrap();
-        header.write_u32::<LittleEndian>(2).unwrap(); // input_format (RGBA)
-        header.write_u32::<LittleEndian>(2).unwrap(); // output_format (RGBA)
+        let in_fmt = 1; // DXGI_FORMAT_R8G8B8A8_UNORM (8-bit standard RGBA matching FFmpeg)
+        let out_fmt = 1; // DXGI_FORMAT_R8G8B8A8_UNORM (8-bit standard RGBA matching FFmpeg)
+        header.write_u32::<LittleEndian>(in_fmt).unwrap();
+        header.write_u32::<LittleEndian>(out_fmt).unwrap();
         header.write_u32::<LittleEndian>(if settings.vsr_enabled { 1 } else { 0 }).unwrap();
-        header.write_u32::<LittleEndian>(settings.vsr_quality).unwrap();
-        header.write_u32::<LittleEndian>(if settings.hdr_enabled { 1 } else { 0 }).unwrap();
+        header.write_u32::<LittleEndian>(settings.vsr_quality.clamp(1, 4)).unwrap();
+        header.write_u32::<LittleEndian>(0).unwrap(); // worker HDR must be 0 to maintain 8-bit RGBA alignment; TrueHDR tone curves are processed in 10-bit FFmpeg filter stage
         header.write_i32::<LittleEndian>(settings.hdr_contrast).unwrap();
         header.write_i32::<LittleEndian>(settings.hdr_saturation).unwrap();
         header.write_i32::<LittleEndian>(settings.hdr_middle_gray).unwrap();
@@ -153,5 +155,61 @@ impl RtxVsrSession {
             let _ = stdin.flush();
         }
         let _ = self.child.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_rtx_vsr_worker() {
+        let mut cur = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        let mut found_dir = None;
+        for _ in 0..6 {
+            if let Some(dir) = cur {
+                let candidate = dir.join("bin").join("runtime").join("rtx_video");
+                if candidate.exists() && candidate.join("rtx-video-worker.exe").exists() {
+                    found_dir = Some(candidate);
+                    break;
+                }
+                cur = dir.parent().map(|p| p.to_path_buf());
+            }
+        }
+        if found_dir.is_none() {
+            let alt = PathBuf::from(r"C:\Users\bhara\Downloads\videoenhancher\dlss 5 for images and videos !\bin\runtime\rtx_video");
+            if alt.exists() {
+                found_dir = Some(alt);
+            }
+        }
+
+        let runtime_dir = match found_dir {
+            Some(d) => d,
+            None => return, // Skip test if runtime worker binaries are not present in current test environment
+        };
+
+        let gpu = crate::hardware::detect_primary_gpu();
+        let mut settings = RtxVsrSettings::default();
+        settings.vsr_enabled = true;
+        settings.hdr_enabled = false;
+
+        let session = RtxVsrSession::start(
+            &runtime_dir,
+            &gpu.luid,
+            160,
+            90,
+            320,
+            180,
+            &settings,
+        );
+
+        if let Ok(mut session) = session {
+            let in_pixels = vec![128u8; 160 * 90 * 4];
+            let mut out_pixels = vec![0u8; 320 * 180 * 4];
+            let res = session.process_frame(&in_pixels, &mut out_pixels);
+            assert!(res.is_ok());
+            session.close();
+        }
     }
 }

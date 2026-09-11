@@ -443,9 +443,9 @@ impl PipelineOrchestrator {
 
             let rtx_dir = self.runtime_dir.join("rtx_video");
             let vsr_settings = RtxVsrSettings {
-                vsr_enabled: config.enable_upscale && config.upscale_engine.contains("RTX"),
-                vsr_quality: config.vsr_quality,
-                hdr_enabled: config.enable_rtx_hdr.unwrap_or(false),
+                vsr_enabled: true,
+                vsr_quality: config.vsr_quality.clamp(1, 4),
+                hdr_enabled: false, // Worker stays in pristine RGBA8; HDR color transforms handled in 10-bit FFmpeg filter stages
                 hdr_contrast: config.rtx_hdr_contrast.unwrap_or(100),
                 hdr_saturation: config.rtx_hdr_saturation.unwrap_or(100),
                 hdr_middle_gray: config.rtx_hdr_middle_gray.unwrap_or(18),
@@ -462,7 +462,7 @@ impl PipelineOrchestrator {
                 target_h,
                 &vsr_settings,
             ) {
-                stages_run.push(format!("RTX Video VSR/HDR ({}x{})", target_w, target_h));
+                stages_run.push(format!("RTX Video VSR ({}x{})", target_w, target_h));
                 let mut out_buffer = vec![0u8; (target_w * target_h * 4) as usize];
                 if session.process_frame(&processed_rgba, &mut out_buffer).is_ok() {
                     processed_rgba = out_buffer;
@@ -629,15 +629,15 @@ impl PipelineOrchestrator {
             }
         }
 
-        // 3. Stage 2: RTX Video VSR & TrueHDR (if enabled)
+        // 3. Stage 2: RTX Video VSR (AI Tensor Super Resolution & Artifact Reduction)
         let mut rtx_session: Option<RtxVsrSession> = None;
         let rtx_active = (config.enable_upscale && config.upscale_engine.contains("RTX")) || config.enable_rtx_hdr.unwrap_or(false);
         if rtx_active {
             let rtx_dir = self.runtime_dir.join("rtx_video");
             let vsr_settings = RtxVsrSettings {
-                vsr_enabled: config.enable_upscale && config.upscale_engine.contains("RTX"),
-                vsr_quality: config.vsr_quality,
-                hdr_enabled: config.enable_rtx_hdr.unwrap_or(false),
+                vsr_enabled: true,
+                vsr_quality: config.vsr_quality.clamp(1, 4),
+                hdr_enabled: false, // Keep worker in pristine RGBA8; 10-bit HDR is applied cleanly in encoder filter stage
                 hdr_contrast: config.rtx_hdr_contrast.unwrap_or(100),
                 hdr_saturation: config.rtx_hdr_saturation.unwrap_or(100),
                 hdr_middle_gray: config.rtx_hdr_middle_gray.unwrap_or(18),
@@ -657,7 +657,7 @@ impl PipelineOrchestrator {
                 target_h,
                 &vsr_settings,
             ) {
-                stages_run.push(format!("RTX Video VSR/HDR ({}x{})", target_w, target_h));
+                stages_run.push(format!("RTX Video VSR ({}x{})", target_w, target_h));
                 current_w = target_w;
                 current_h = target_h;
                 rtx_session = Some(s);
@@ -754,7 +754,7 @@ impl PipelineOrchestrator {
         let mut processed_frames: u64 = 0;
         let mut last_emit = Instant::now();
 
-        for frame_idx in 0..total_frames {
+        loop {
             if self.cancel_flag.load(Ordering::SeqCst) {
                 let _ = decoder.kill();
                 let _ = encoder.kill();
@@ -770,25 +770,25 @@ impl PipelineOrchestrator {
             // Stage 1: DLSS 5 Neural Reconstruction
             if let Some(ref mut session) = dlss_session {
                 session.process_frame(
-                    frame_idx as u32,
-                    frame_idx == 0,
-                    frame_idx as i64,
+                    processed_frames as u32,
+                    processed_frames == 0,
+                    processed_frames as i64,
                     active_slice,
                     &mut dlss_out,
                 ).map_err(|e| {
                     let _ = decoder.kill();
                     let _ = encoder.kill();
-                    format!("DLSS 5 Neural Reconstruction error at frame {}: {}", frame_idx, e)
+                    format!("DLSS 5 Neural Reconstruction error at frame {}: {}", processed_frames, e)
                 })?;
                 active_slice = &dlss_out;
             }
 
-            // Stage 2: RTX Video VSR & TrueHDR
+            // Stage 2: RTX Video VSR
             if let Some(ref mut session) = rtx_session {
                 session.process_frame(active_slice, &mut rtx_out).map_err(|e| {
                     let _ = decoder.kill();
                     let _ = encoder.kill();
-                    format!("RTX Video VSR/HDR error at frame {}: {}", frame_idx, e)
+                    format!("RTX Video VSR error at frame {}: {}", processed_frames, e)
                 })?;
                 active_slice = &rtx_out;
             }
@@ -799,8 +799,12 @@ impl PipelineOrchestrator {
 
             processed_frames += 1;
 
-            if last_emit.elapsed().as_millis() > 200 || frame_idx == total_frames - 1 {
-                let progress = processed_frames as f32 / total_frames.max(1) as f32;
+            if last_emit.elapsed().as_millis() > 200 || (total_frames > 0 && processed_frames >= total_frames) {
+                let progress = if total_frames > 0 {
+                    (processed_frames as f32 / total_frames as f32).min(1.0)
+                } else {
+                    0.5
+                };
                 let elapsed = start_time.elapsed().as_secs_f32();
                 let current_fps = processed_frames as f32 / elapsed.max(0.001);
 
@@ -809,16 +813,16 @@ impl PipelineOrchestrator {
                         "pipeline-progress",
                         ProgressPayload {
                             job_id: job_id.to_string(),
-                            stage: format!("Processing Frame {}/{}", processed_frames, total_frames),
+                            stage: format!("Processing Frame {}/{}", processed_frames, total_frames.max(processed_frames)),
                             progress,
                             current_frame: processed_frames,
-                            total_frames,
+                            total_frames: total_frames.max(processed_frames),
                             fps: current_fps,
-                            message: format!("{:.1} FPS - ETA: {:.0}s", current_fps, (total_frames - processed_frames) as f32 / current_fps.max(0.1)),
+                            message: format!("{:.1} FPS - ETA: {:.0}s", current_fps, ((total_frames.saturating_sub(processed_frames)) as f32 / current_fps.max(0.1)).max(0.0)),
                         },
                     );
                 } else {
-                    print!("\r  -> Processing Frame {}/{} ({:.1} FPS)", processed_frames, total_frames, current_fps);
+                    print!("\r  -> Processing Frame {}/{} ({:.1} FPS)", processed_frames, total_frames.max(processed_frames), current_fps);
                     let _ = std::io::stdout().flush();
                 }
                 last_emit = Instant::now();
@@ -849,13 +853,16 @@ impl PipelineOrchestrator {
             return Err("No video frames were processed from decoder".into());
         }
 
+        let final_w = if config.enable_upscale { out_w } else { current_w };
+        let final_h = if config.enable_upscale { out_h } else { current_h };
+
         Ok(PipelineResult {
             input_path: config.input_path.clone(),
             output_path: out_path.to_string_lossy().to_string(),
             elapsed_seconds: start_time.elapsed().as_secs_f64(),
             stages_run: stages_run.clone(),
             input_resolution: format!("{}x{}", width, height),
-            output_resolution: format!("{}x{}", out_w, out_h),
+            output_resolution: format!("{}x{}", final_w, final_h),
         })
     }
 
@@ -1265,6 +1272,31 @@ mod tests {
                 eprintln!("Video DLSS 5 NR execution note (headless/hardware): {}", e);
             }
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_render_user_video() {
+        let bin_dir = PathBuf::from(r"C:\Users\bhara\Downloads\videoenhancher\dlss 5 for images and videos !\bin");
+        let orchestrator = PipelineOrchestrator::new(&bin_dir);
+        let vid_path = PathBuf::from(r"C:\Users\bhara\Downloads\OG bee Haircut 😭❤️ ! 2 years kalichi #tamil #trending.mp4");
+        if !vid_path.exists() {
+            return;
+        }
+        let meta = crate::media::probe::probe_file(&orchestrator.ffprobe_path, Some(&orchestrator.ffmpeg_path), &vid_path).unwrap();
+        let mut config = PipelineConfig::default();
+        config.input_path = vid_path.to_string_lossy().to_string();
+        config.output_dir = Some(r"C:\Users\bhara\Downloads\outputs".to_string());
+        config.enable_nr = true;
+        config.enable_upscale = false;
+        config.enable_rtx_hdr = Some(false);
+        config.dlss5.realism_mode = "real_to_ultra_real".to_string();
+        config.video_codec = "hevc_nvenc".to_string();
+        config.video_quality = "p6".to_string();
+
+        let res = orchestrator.execute(None, &config, &meta, "user_render");
+        assert!(res.is_ok(), "Pipeline render failed: {:?}", res.err());
+        println!("Render completed: {:?}", res.unwrap());
     }
 }
 

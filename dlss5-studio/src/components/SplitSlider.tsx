@@ -163,19 +163,19 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
   const enhVideoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const playOriginalAudio = !normEnhanced || viewMode === 'original' || audioSource === 'original';
+
   // Synchronized audio routing: ensures zero audio echo
   useEffect(() => {
-    const playOriginal = !normEnhanced || viewMode === 'original' || audioSource === 'original';
-
     if (origVideoRef.current) {
-      origVideoRef.current.muted = playOriginal ? isMuted : true;
+      origVideoRef.current.muted = playOriginalAudio ? isMuted : true;
       origVideoRef.current.volume = volume;
     }
     if (enhVideoRef.current) {
-      enhVideoRef.current.muted = !playOriginal ? isMuted : true;
+      enhVideoRef.current.muted = !playOriginalAudio ? isMuted : true;
       enhVideoRef.current.volume = volume;
     }
-  }, [isMuted, volume, audioSource, normEnhanced, normOriginal, viewMode]);
+  }, [isMuted, volume, playOriginalAudio]);
 
   useEffect(() => {
     let active = true;
@@ -749,7 +749,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
                     ref={enhVideoRef}
                     src={normEnhanced}
                     playsInline
-                    muted={isMuted}
+                    muted={playOriginalAudio ? true : isMuted}
                     onTimeUpdate={handleMasterTimeUpdate}
                     onPlay={handleMasterPlay}
                     onPause={handleMasterPause}
@@ -773,7 +773,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
                     ref={origVideoRef}
                     src={normOriginal}
                     playsInline
-                    muted={true}
+                    muted={playOriginalAudio ? isMuted : true}
                     className="max-w-full max-h-full object-contain"
                   />
                 ) : (
@@ -823,7 +823,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
                     ref={origVideoRef}
                     src={normOriginal}
                     playsInline
-                    muted={true}
+                    muted={playOriginalAudio ? isMuted : true}
                     className="max-w-full max-h-full object-contain pointer-events-none"
                   />
                 ) : (
@@ -845,7 +845,7 @@ export const SplitSlider: React.FC<SplitSliderProps> = ({
                     ref={enhVideoRef}
                     src={normEnhanced}
                     playsInline
-                    muted={isMuted}
+                    muted={playOriginalAudio ? true : isMuted}
                     onTimeUpdate={handleMasterTimeUpdate}
                     onPlay={handleMasterPlay}
                     onPause={handleMasterPause}
