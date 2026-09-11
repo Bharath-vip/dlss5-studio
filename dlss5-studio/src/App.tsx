@@ -16,7 +16,7 @@ import type {
   AppPreferences,
   RenderHistoryItem,
 } from './types/pipeline';
-import { Sparkles, Square, CheckCircle2, FolderOpen, Save, Download, Info, Settings } from 'lucide-react';
+import { Sparkles, Square, CheckCircle2, FolderOpen, Save, Download, Info, Settings, Activity } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save, open } from '@tauri-apps/plugin-dialog';
@@ -51,6 +51,13 @@ const defaultPipelineConfig: PipelineConfig = {
     deband: 0,
     tonemapper: 0,
     ray_reconstruction: false,
+    realism_mode: 'real_to_ultra_real',
+    delineation: 0.0,
+    texture_synthesis: 1.0,
+    cel_shade_smoothing: 0.0,
+    hard_detail_dlss: 1.5,
+    specular_restoration: 1.2,
+    gamut_rebalance: 1.0,
   },
   enable_upscale: false,
   upscale_engine: 'DLSS Super Resolution',
@@ -332,6 +339,97 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleAutoTuneRealism = () => {
+    const meta = metadataList[activeMetaIndex];
+    if (!meta?.pixel_telemetry) return;
+    const pt = meta.pixel_telemetry;
+    const rec = pt.recommended_mode;
+
+    if (rec === 'anime_to_real') {
+      setConfig((prev) => ({
+        ...prev,
+        enable_nr: true,
+        dlss5: {
+          ...prev.dlss5,
+          realism_mode: 'anime_to_real',
+          preset: 2,
+          style: 1,
+          dlss_model_preset: 13,
+          intensity: 1.45,
+          local_tone: 1.25,
+          local_structure: 1.45,
+          skin_structure: pt.skin_tone_ratio > 0.05 ? 0.9 : 0.6,
+          delineation: pt.recommended_delineation,
+          texture_synthesis: pt.recommended_texture_synthesis,
+          cel_shade_smoothing: Math.max(1.2, pt.recommended_delineation),
+          gamut_rebalance: 1.2,
+          cas_sharpening: pt.recommended_cas,
+          clarity: 0.35,
+          bloom_threshold: 0.2,
+          chroma_aberration: 0.1,
+          vignette: 0.12,
+          deband: pt.recommended_deband,
+          tonemapper: 2,
+          ray_reconstruction: true,
+        },
+        enable_upscale: true,
+        target_resolution: '4k',
+        upscale_engine: 'DLSS Super Resolution',
+        vsr_quality: 4,
+        video_codec: 'hevc_nvenc',
+        video_quality: 'p7',
+        bitrate_cq: 18,
+        bit_depth_10bit: true,
+      }));
+      setStatusMessage(
+        `Auto-Tuned for Anime ➔ Real Live-Action (Delineation: ${pt.recommended_delineation.toFixed(2)}x, Texture: ${pt.recommended_texture_synthesis.toFixed(2)}x, Deband: L${pt.recommended_deband})`
+      );
+    } else {
+      setConfig((prev) => ({
+        ...prev,
+        enable_nr: true,
+        dlss5: {
+          ...prev.dlss5,
+          realism_mode: 'real_to_ultra_real',
+          preset: 1,
+          style: 2,
+          dlss_model_preset: 13,
+          intensity: 1.65,
+          local_tone: 1.3,
+          local_structure: 1.6,
+          skin_structure: pt.skin_tone_ratio > 0.08 ? 1.1 : 0.85,
+          hard_detail_dlss: pt.recommended_hard_detail,
+          specular_restoration: Math.min(1.8, Math.max(1.2, 1.2 + pt.specular_highlight_ratio * 4.0)),
+          texture_synthesis: pt.recommended_texture_synthesis,
+          cas_sharpening: pt.recommended_cas,
+          clarity: 0.5,
+          bloom_threshold: 0.15,
+          vignette: 0.08,
+          deband: pt.recommended_deband,
+          tonemapper: 1,
+          ray_reconstruction: true,
+        },
+        enable_upscale: true,
+        target_resolution: '4k',
+        upscale_engine: 'DLSS + RTX VSR Dual Cascade',
+        vsr_quality: 4,
+        enable_rtx_hdr: true,
+        rtx_hdr_contrast: 115,
+        rtx_hdr_saturation: 110,
+        rtx_hdr_peak_nits: Math.round(Math.min(2000, Math.max(1000, pt.peak_luminance_nits))),
+        video_codec: 'hevc_nvenc',
+        video_quality: 'p7',
+        bitrate_cq: 16,
+        bit_depth_10bit: true,
+      }));
+      const peakTarget = Math.round(Math.min(2000, Math.max(1000, pt.peak_luminance_nits)));
+      setStatusMessage(
+        `Auto-Tuned for Real ➔ Hyper Ultra Real (Hard Detail: ${pt.recommended_hard_detail.toFixed(2)}x, CAS: ${pt.recommended_cas.toFixed(2)}, TrueHDR: ${peakTarget} Nits)`
+      );
+    }
+  };
+
+
   // Global keyboard shortcuts (Ctrl+O to open, Ctrl+S to export, Ctrl+, for prefs, I for inspector, L for loupe)
   useEffect(() => {
     const handleGlobalKeys = (e: KeyboardEvent) => {
@@ -401,6 +499,85 @@ export const App: React.FC = () => {
             currentMeta={activeMeta}
             fileCount={selectedPaths.length}
           />
+
+          {/* Deep Pixel Intelligence Telemetry Card */}
+          {activeMeta?.pixel_telemetry && (
+            <div className="bg-[#0b101c] border border-fuchsia-900/40 rounded-xl p-3 space-y-2.5 font-mono shadow-md">
+              <div className="flex items-center justify-between border-b border-[#1b253b] pb-2">
+                <div className="flex items-center space-x-1.5">
+                  <Activity className="w-3.5 h-3.5 text-[#76b900]" />
+                  <span className="text-[11px] font-bold text-gray-200 uppercase tracking-wider">Deep Pixel Intelligence</span>
+                </div>
+                <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                  activeMeta.pixel_telemetry.detected_type.includes('Anime')
+                    ? 'bg-fuchsia-950/70 text-fuchsia-300 border-fuchsia-500/50 shadow-sm shadow-fuchsia-950'
+                    : 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-950'
+                }`}>
+                  {activeMeta.pixel_telemetry.detected_type} ({(Math.max(activeMeta.pixel_telemetry.anime_score, activeMeta.pixel_telemetry.photoreal_score) * 100).toFixed(0)}%)
+                </div>
+              </div>
+
+              {/* Real-time Spectrum Matrix */}
+              <div className="grid grid-cols-2 gap-1.5 text-[10px] bg-[#070b14] p-2 rounded-lg border border-[#162238]">
+                <div className="flex justify-between items-center pr-1">
+                  <span className="text-gray-400">Peak Luma:</span>
+                  <span className="text-[#76b900] font-bold">{activeMeta.pixel_telemetry.peak_luminance_nits.toFixed(0)} Nits</span>
+                </div>
+                <div className="flex justify-between items-center pl-1">
+                  <span className="text-gray-400">Dynamic Range:</span>
+                  <span className="text-cyan-300 font-bold">{activeMeta.pixel_telemetry.dynamic_range_db.toFixed(1)} dB</span>
+                </div>
+                <div className="flex justify-between items-center pr-1">
+                  <span className="text-gray-400">Detail Entropy:</span>
+                  <span className="text-purple-300 font-bold">{activeMeta.pixel_telemetry.detail_entropy.toFixed(2)} b/px</span>
+                </div>
+                <div className="flex justify-between items-center pl-1">
+                  <span className="text-gray-400">Micro-Contrast:</span>
+                  <span className="text-[#76b900] font-bold">{(activeMeta.pixel_telemetry.micro_contrast_index * 100).toFixed(0)}%</span>
+                </div>
+                <div className="flex justify-between items-center pr-1">
+                  <span className="text-gray-400">Cel Flatness:</span>
+                  <span className="text-amber-300 font-bold">{(activeMeta.pixel_telemetry.flat_region_ratio * 100).toFixed(1)}%</span>
+                </div>
+                <div className="flex justify-between items-center pl-1">
+                  <span className="text-gray-400">Outlines:</span>
+                  <span className="text-fuchsia-300 font-bold">{(activeMeta.pixel_telemetry.outline_density * 100).toFixed(1)}%</span>
+                </div>
+                <div className="flex justify-between items-center pr-1">
+                  <span className="text-gray-400">Skin Dermal:</span>
+                  <span className="text-rose-300 font-bold">{(activeMeta.pixel_telemetry.skin_tone_ratio * 100).toFixed(1)}%</span>
+                </div>
+                <div className="flex justify-between items-center pl-1">
+                  <span className="text-gray-400">Banding Step:</span>
+                  <span className="text-amber-400 font-bold">{(activeMeta.pixel_telemetry.color_banding_index * 100).toFixed(1)}%</span>
+                </div>
+                <div className="flex justify-between items-center pr-1">
+                  <span className="text-gray-400">White Balance:</span>
+                  <span className="text-cyan-200 font-bold">{activeMeta.pixel_telemetry.color_temperature_kelvin}K</span>
+                </div>
+                <div className="flex justify-between items-center pl-1">
+                  <span className="text-gray-400">Hyper-Real Fit:</span>
+                  <span className="text-emerald-400 font-bold">{(activeMeta.pixel_telemetry.hyper_real_score * 100).toFixed(0)}%</span>
+                </div>
+              </div>
+
+              {/* Auto-Tune One-Click Button */}
+              <div className="flex items-center justify-between pt-0.5">
+                <span className="text-[10px] text-gray-400">
+                  Optimal: <span className="text-white font-bold">{activeMeta.pixel_telemetry.recommended_mode === 'anime_to_real' ? '🎨 Anime ➔ Real' : '💎 Real ➔ Hyper Real'}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleAutoTuneRealism}
+                  className="px-2.5 py-1 bg-[#16271c] hover:bg-[#203c29] text-[#76b900] hover:text-[#9af300] border border-[#76b900]/40 rounded-lg text-[10px] font-bold transition-all shadow-sm shadow-[#76b900]/10 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3 h-3 text-[#76b900]" />
+                  <span>⚡ Auto-Tune DLSS 5</span>
+                </button>
+              </div>
+            </div>
+          )}
+
 
           {/* Multi-Stage Visual Node Configuration */}
           <PipelineStages

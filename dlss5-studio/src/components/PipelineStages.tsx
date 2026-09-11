@@ -20,7 +20,7 @@ interface PipelineStagesProps {
 }
 
 export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange, isVideo, metadata }) => {
-  const [stage1Tab, setStage1Tab] = useState<'neural' | 'renodx' | 'reshade'>('neural');
+  const [stage1Tab, setStage1Tab] = useState<'realism' | 'neural' | 'renodx' | 'reshade'>('realism');
 
   const handleBrowseOutputDir = async () => {
     try {
@@ -149,6 +149,82 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
 
   const applyPreset = (presetName: string) => {
     switch (presetName) {
+      case 'anime_to_real':
+        onChange({
+          ...config,
+          enable_nr: true,
+          dlss5: {
+            ...config.dlss5,
+            realism_mode: 'anime_to_real',
+            preset: 2, // Balanced Studio
+            style: 1,  // Natural Color
+            dlss_model_preset: 13, // Model M
+            intensity: 1.45,
+            local_tone: 1.25,
+            local_structure: 1.45,
+            skin_structure: 0.8,
+            delineation: 1.35,
+            texture_synthesis: 1.4,
+            cel_shade_smoothing: 1.35,
+            gamut_rebalance: 1.2,
+            cas_sharpening: 0.35,
+            clarity: 0.35,
+            bloom_threshold: 0.2,
+            chroma_aberration: 0.1,
+            vignette: 0.12,
+            deband: 1,
+            tonemapper: 2, // AgX Cinematic
+            ray_reconstruction: true,
+          },
+          enable_upscale: true,
+          target_resolution: '4k',
+          upscale_engine: 'DLSS Super Resolution',
+          vsr_quality: 4,
+          video_codec: 'hevc_nvenc',
+          video_quality: 'p7',
+          bitrate_cq: 18,
+          bit_depth_10bit: true,
+        });
+        break;
+      case 'real_to_ultra_real':
+        onChange({
+          ...config,
+          enable_nr: true,
+          dlss5: {
+            ...config.dlss5,
+            realism_mode: 'real_to_ultra_real',
+            preset: 1, // Sharp
+            style: 2,  // Cinematic Contrast
+            dlss_model_preset: 13, // Model M (High Fidelity)
+            intensity: 1.65, // Hard Detailed DLSS 5
+            local_tone: 1.3,
+            local_structure: 1.6,
+            skin_structure: 0.95,
+            hard_detail_dlss: 1.7,
+            specular_restoration: 1.5,
+            texture_synthesis: 1.2,
+            cas_sharpening: 0.55,
+            clarity: 0.5,
+            bloom_threshold: 0.15,
+            vignette: 0.08,
+            deband: 1,
+            tonemapper: 1, // ACES Filmic
+            ray_reconstruction: true,
+          },
+          enable_upscale: true,
+          target_resolution: '4k',
+          upscale_engine: 'DLSS + RTX VSR Dual Cascade',
+          vsr_quality: 4,
+          enable_rtx_hdr: true,
+          rtx_hdr_contrast: 115,
+          rtx_hdr_saturation: 110,
+          rtx_hdr_peak_nits: 2000,
+          video_codec: 'hevc_nvenc',
+          video_quality: 'p7',
+          bitrate_cq: 16, // Archival mastering
+          bit_depth_10bit: true,
+        });
+        break;
       case '4k_master':
         onChange({
           ...config,
@@ -274,29 +350,43 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
         <div className="flex items-center space-x-1.5 overflow-x-auto">
           <button
             type="button"
+            onClick={() => applyPreset('anime_to_real')}
+            className="px-2.5 py-1 bg-[#261530] hover:bg-[#3b1c4d] text-fuchsia-300 hover:text-white rounded-lg border border-fuchsia-500/50 text-[11px] font-bold transition-all shadow-sm shadow-fuchsia-950/40 cursor-pointer flex items-center gap-1 shrink-0"
+          >
+            🎨 Anime ➔ Real
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPreset('real_to_ultra_real')}
+            className="px-2.5 py-1 bg-[#12281a] hover:bg-[#193d25] text-emerald-300 hover:text-white rounded-lg border border-emerald-500/50 text-[11px] font-bold transition-all shadow-sm shadow-emerald-950/40 cursor-pointer flex items-center gap-1 shrink-0"
+          >
+            💎 Real ➔ Hyper Real
+          </button>
+          <button
+            type="button"
             onClick={() => applyPreset('4k_master')}
-            className="px-2 py-1 bg-[#14231a] hover:bg-[#1a3022] text-[#76b900] hover:text-[#90e000] rounded border border-[#76b900]/40 text-[11px] font-bold transition-colors cursor-pointer"
+            className="px-2 py-1 bg-[#14231a] hover:bg-[#1a3022] text-[#76b900] hover:text-[#90e000] rounded border border-[#76b900]/40 text-[11px] font-bold transition-colors cursor-pointer shrink-0"
           >
             ⭐ 4K Master
           </button>
           <button
             type="button"
             onClick={() => applyPreset('cinema_4k')}
-            className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-cyan-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer"
+            className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-cyan-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer shrink-0"
           >
             Cinema 4K
           </button>
           <button
             type="button"
             onClick={() => applyPreset('reshade_optics')}
-            className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-amber-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer"
+            className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-amber-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer shrink-0"
           >
             ReShade Suite
           </button>
           <button
             type="button"
             onClick={() => applyPreset('truehdr_4k')}
-            className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-purple-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer"
+            className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-purple-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer shrink-0"
           >
             TrueHDR
           </button>
@@ -304,7 +394,7 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
             <button
               type="button"
               onClick={() => applyPreset('fast_60')}
-              className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-gray-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer"
+              className="px-2 py-1 bg-[#141e2e] hover:bg-[#1d2b40] text-gray-300 hover:text-white rounded border border-[#20324d] text-[11px] transition-colors cursor-pointer shrink-0"
             >
               60 FPS
             </button>
@@ -328,6 +418,9 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
                 <span className="text-sm font-semibold text-gray-200">DLSS 5 Neural Reconstruction</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono">
                   Stage 1
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-300 font-mono">
+                  Realism Model
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono">
                   + ReShade / RenoDX
@@ -353,8 +446,20 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
             <div className="flex items-center space-x-1 border-b border-[#1b263b] pb-2 font-mono text-[11px]">
               <button
                 type="button"
+                onClick={() => setStage1Tab('realism')}
+                className={`px-3 py-1 rounded-md transition-colors flex items-center gap-1.5 cursor-pointer ${
+                  stage1Tab === 'realism'
+                    ? 'bg-[#2a1738] text-fuchsia-300 border border-fuchsia-500/50 font-semibold'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-fuchsia-400" />
+                Realism & Deep Pixel
+              </button>
+              <button
+                type="button"
                 onClick={() => setStage1Tab('neural')}
-                className={`px-3 py-1 rounded-md transition-colors ${
+                className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
                   stage1Tab === 'neural'
                     ? 'bg-[#18281a] text-[#76b900] border border-[#76b900]/40 font-semibold'
                     : 'text-gray-400 hover:text-gray-200'
@@ -365,7 +470,7 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
               <button
                 type="button"
                 onClick={() => setStage1Tab('renodx')}
-                className={`px-3 py-1 rounded-md transition-colors ${
+                className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
                   stage1Tab === 'renodx'
                     ? 'bg-[#112338] text-cyan-400 border border-cyan-500/40 font-semibold'
                     : 'text-gray-400 hover:text-gray-200'
@@ -376,7 +481,7 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
               <button
                 type="button"
                 onClick={() => setStage1Tab('reshade')}
-                className={`px-3 py-1 rounded-md transition-colors ${
+                className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
                   stage1Tab === 'reshade'
                     ? 'bg-[#291b36] text-purple-300 border border-purple-500/40 font-semibold'
                     : 'text-gray-400 hover:text-gray-200'
@@ -385,6 +490,184 @@ export const PipelineStages: React.FC<PipelineStagesProps> = ({ config, onChange
                 ReShade Shaders
               </button>
             </div>
+
+            {/* TAB 0: REALISM & DEEP PIXEL ARCHITECTURE */}
+            {stage1Tab === 'realism' && (
+              <div className="space-y-3.5 bg-[#100c1c] p-3.5 border border-fuchsia-950/60 rounded-xl">
+                {/* Mode Selector Badges */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-gray-300 font-semibold text-xs flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-fuchsia-400" />
+                      Neural Realism Mode:
+                    </span>
+                    <span className="text-[10px] text-fuchsia-400 font-mono">
+                      {config.dlss5.realism_mode === 'anime_to_real'
+                        ? 'Anime ➔ Live-Action Realism'
+                        : config.dlss5.realism_mode === 'real_to_ultra_real'
+                        ? 'Real ➔ Hyper Ultra Real'
+                        : 'Custom Realism Matrix'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('anime_to_real')}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                        config.dlss5.realism_mode === 'anime_to_real'
+                          ? 'bg-[#2b163d] border-fuchsia-400 text-fuchsia-200 font-bold shadow-sm shadow-fuchsia-950'
+                          : 'bg-[#141221] border-[#291f3d] text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="font-semibold text-xs text-fuchsia-300">🎨 Anime ➔ Real</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">De-lineation + Cel smoothing + Pore synthesis</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPreset('real_to_ultra_real')}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                        config.dlss5.realism_mode === 'real_to_ultra_real'
+                          ? 'bg-[#122e20] border-emerald-400 text-emerald-200 font-bold shadow-sm shadow-emerald-950'
+                          : 'bg-[#141221] border-[#291f3d] text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="font-semibold text-xs text-emerald-300">💎 Real ➔ Hyper Real</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">DLSS 5 Hard Detail + TrueHDR 2000 Nits</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDlss5({ realism_mode: 'custom' })}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                        config.dlss5.realism_mode === 'custom'
+                          ? 'bg-[#182338] border-cyan-400 text-cyan-200 font-bold'
+                          : 'bg-[#141221] border-[#291f3d] text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <div className="font-semibold text-xs text-cyan-300">🛠️ Custom Studio</div>
+                      <div className="text-[10px] text-gray-400 mt-0.5">Custom deep pixel parameters</div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Deep Realism Sliders */}
+                <div className="space-y-3 pt-2 border-t border-[#2a1d3d]">
+                  {/* Delineation Slider */}
+                  <div>
+                    <div className="flex justify-between text-gray-300 mb-1">
+                      <span className="font-medium">Anime Outline De-lineation & Softening</span>
+                      <span className="font-mono text-fuchsia-400">{(config.dlss5.delineation ?? 1.2).toFixed(2)}×</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="2.0"
+                      step="0.05"
+                      value={config.dlss5.delineation ?? 1.2}
+                      onChange={(e) => updateDlss5({ delineation: parseFloat(e.target.value) })}
+                      className="w-full accent-fuchsia-400 bg-gray-800 h-1.5 rounded-lg cursor-pointer"
+                    />
+                    <div className="text-[10px] text-gray-400 mt-0.5">
+                      Bilateral edge diffusion dissolves harsh 2D cartoon ink outlines into organic photographic boundaries.
+                    </div>
+                  </div>
+
+                  {/* Organic Micro-Texture & Skin Pore Synthesis */}
+                  <div>
+                    <div className="flex justify-between text-gray-300 mb-1">
+                      <span className="font-medium">Organic Micro-Texture & Skin Pore Synthesis</span>
+                      <span className="font-mono text-fuchsia-400">{(config.dlss5.texture_synthesis ?? 1.3).toFixed(2)}×</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="2.0"
+                      step="0.05"
+                      value={config.dlss5.texture_synthesis ?? 1.3}
+                      onChange={(e) => updateDlss5({ texture_synthesis: parseFloat(e.target.value) })}
+                      className="w-full accent-fuchsia-400 bg-gray-800 h-1.5 rounded-lg cursor-pointer"
+                    />
+                    <div className="text-[10px] text-gray-400 mt-0.5">
+                      Synthesizes high-frequency epidermal skin pores, corneal reflections, and fabric weave over flat drawings.
+                    </div>
+                  </div>
+
+                  {/* Cel-Shading Gradient De-quantization */}
+                  <div>
+                    <div className="flex justify-between text-gray-300 mb-1">
+                      <span className="font-medium">Cel-Shading Gradient De-quantization</span>
+                      <span className="font-mono text-fuchsia-400">{(config.dlss5.cel_shade_smoothing ?? 1.25).toFixed(2)}×</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="2.0"
+                      step="0.05"
+                      value={config.dlss5.cel_shade_smoothing ?? 1.25}
+                      onChange={(e) => updateDlss5({ cel_shade_smoothing: parseFloat(e.target.value) })}
+                      className="w-full accent-fuchsia-400 bg-gray-800 h-1.5 rounded-lg cursor-pointer"
+                    />
+                    <div className="text-[10px] text-gray-400 mt-0.5">
+                      Smooths stepped cartoon shade transitions into natural continuous illumination gradients.
+                    </div>
+                  </div>
+
+                  {/* Hard Detailed DLSS 5 Multiplier */}
+                  <div>
+                    <div className="flex justify-between text-gray-300 mb-1">
+                      <span className="font-medium">DLSS 5 Hard Detail Evaluation Multiplier</span>
+                      <span className="font-mono text-[#76b900]">{(config.dlss5.hard_detail_dlss ?? 1.5).toFixed(2)}×</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="3.0"
+                      step="0.05"
+                      value={config.dlss5.hard_detail_dlss ?? 1.5}
+                      onChange={(e) => updateDlss5({ hard_detail_dlss: parseFloat(e.target.value) })}
+                      className="w-full accent-[#76b900] bg-gray-800 h-1.5 rounded-lg cursor-pointer"
+                    />
+                    <div className="text-[10px] text-gray-400 mt-0.5">
+                      Pushes NVIDIA Feature-18 neural reconstruction to maximum pixel clarity and sub-pixel edge sharpness.
+                    </div>
+                  </div>
+
+                  {/* Specular & Corneal Reflection Restoration */}
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <div>
+                      <div className="flex justify-between text-gray-300 mb-1 text-[11px]">
+                        <span>Specular Highlight Pop</span>
+                        <span className="font-mono text-cyan-400">{(config.dlss5.specular_restoration ?? 1.2).toFixed(2)}×</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="2.0"
+                        step="0.05"
+                        value={config.dlss5.specular_restoration ?? 1.2}
+                        onChange={(e) => updateDlss5({ specular_restoration: parseFloat(e.target.value) })}
+                        className="w-full accent-cyan-400 bg-gray-800 h-1.5 rounded-lg cursor-pointer"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-gray-300 mb-1 text-[11px]">
+                        <span>Gamut Film Balance</span>
+                        <span className="font-mono text-cyan-400">{(config.dlss5.gamut_rebalance ?? 1.0).toFixed(2)}×</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="2.0"
+                        step="0.05"
+                        value={config.dlss5.gamut_rebalance ?? 1.0}
+                        onChange={(e) => updateDlss5({ gamut_rebalance: parseFloat(e.target.value) })}
+                        className="w-full accent-cyan-400 bg-gray-800 h-1.5 rounded-lg cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* TAB 1: NEURAL CORE */}
             {stage1Tab === 'neural' && (

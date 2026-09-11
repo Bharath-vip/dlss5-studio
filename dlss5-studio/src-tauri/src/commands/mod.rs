@@ -31,11 +31,12 @@ pub fn probe_media(
 ) -> Result<Vec<MediaMetadata>, String> {
     let state = state.lock().map_err(|_| "Failed to lock state")?;
     let ffprobe_path = &state.orchestrator.ffprobe_path;
+    let ffmpeg_path = &state.orchestrator.ffmpeg_path;
 
     let mut results = Vec::new();
     for p in paths {
         let path = Path::new(&p);
-        match probe_file(ffprobe_path, path) {
+        match probe_file(ffprobe_path, Some(ffmpeg_path), path) {
             Ok(meta) => results.push(meta),
             Err(e) => eprintln!("Error probing {:?}: {}", path, e),
         }
@@ -49,16 +50,17 @@ pub async fn start_pipeline(
     state: State<'_, Mutex<AppState>>,
     config: PipelineConfig,
 ) -> Result<PipelineResult, String> {
-    let (orchestrator_clone, ffprobe_path) = {
+    let (orchestrator_clone, ffprobe_path, ffmpeg_path) = {
         let state = state.lock().map_err(|_| "Failed to lock state")?;
         (
             state.orchestrator.clone(),
             state.orchestrator.ffprobe_path.clone(),
+            state.orchestrator.ffmpeg_path.clone(),
         )
     };
 
     let in_path = Path::new(&config.input_path);
-    let meta = probe_file(&ffprobe_path, in_path)
+    let meta = probe_file(&ffprobe_path, Some(&ffmpeg_path), in_path)
         .map_err(|e| format!("Failed to probe media: {}", e))?;
 
     let job_id = uuid::Uuid::new_v4().to_string();

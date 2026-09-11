@@ -8,6 +8,37 @@ export interface GpuInfo {
   dlss5_ready: boolean;
 }
 
+export interface PixelTelemetry {
+  mean_luminance: number;
+  peak_luminance_nits: number;
+  dynamic_range_db: number;
+  shadow_floor: number;
+  highlight_ceiling: number;
+  average_saturation: number;
+  max_saturation: number;
+  high_freq_energy: number;
+  detail_entropy: number;
+  flat_region_ratio: number;
+  outline_density: number;
+  micro_contrast_index: number;
+  skin_tone_ratio: number;
+  color_banding_index: number;
+  specular_highlight_ratio: number;
+  color_temperature_kelvin: number;
+  snr_db: number;
+  anime_score: number;
+  photoreal_score: number;
+  hyper_real_score: number;
+  detected_type: string;
+  recommended_mode: 'anime_to_real' | 'real_to_ultra_real' | 'cinema_master';
+  color_gamut: string;
+  recommended_hard_detail: number;
+  recommended_delineation: number;
+  recommended_texture_synthesis: number;
+  recommended_deband: number;
+  recommended_cas: number;
+}
+
 export interface MediaMetadata {
   path: string;
   filename: string;
@@ -21,6 +52,7 @@ export interface MediaMetadata {
   format: string;
   is_hdr: boolean;
   size_bytes: number;
+  pixel_telemetry?: PixelTelemetry;
 }
 
 export interface Dlss5Settings {
@@ -52,6 +84,14 @@ export interface Dlss5Settings {
   deband: number;              // Gradient debanding filter (0: off, 1: subtle, 2: strong)
   tonemapper: number;          // 0: RenoDRT, 1: ACES Filmic, 2: AgX, 3: Neutral
   ray_reconstruction: boolean; // DLSS-RR Neural Ray Reconstruction
+  // Realism & Deep Pixel Parameters
+  realism_mode?: 'anime_to_real' | 'real_to_ultra_real' | 'cinema_master' | 'custom';
+  delineation?: number;            // 0.0 to 2.0 (Anime outline softening)
+  texture_synthesis?: number;      // 0.0 to 2.0 (Organic skin pore & micro-texture synthesis)
+  cel_shade_smoothing?: number;    // 0.0 to 2.0 (Cel-shading de-quantization)
+  hard_detail_dlss?: number;       // 0.0 to 2.0 (DLSS 5 hard detail multiplier)
+  specular_restoration?: number;   // 0.0 to 2.0 (Specular highlight restoration)
+  gamut_rebalance?: number;        // 0.0 to 2.0 (Cartoon to live-action gamut remapping)
 }
 
 export interface PipelineConfig {

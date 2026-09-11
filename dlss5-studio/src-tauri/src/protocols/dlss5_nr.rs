@@ -42,6 +42,14 @@ pub struct Dlss5Settings {
     pub deband: u32,
     pub tonemapper: u32,
     pub ray_reconstruction: bool,
+    // Realism & Deep Pixel Parameters
+    pub realism_mode: String,
+    pub delineation: f32,
+    pub texture_synthesis: f32,
+    pub cel_shade_smoothing: f32,
+    pub hard_detail_dlss: f32,
+    pub specular_restoration: f32,
+    pub gamut_rebalance: f32,
 }
 
 impl Default for Dlss5Settings {
@@ -73,6 +81,13 @@ impl Default for Dlss5Settings {
             deband: 0,
             tonemapper: 0,
             ray_reconstruction: false,
+            realism_mode: "real_to_ultra_real".to_string(),
+            delineation: 0.0,
+            texture_synthesis: 1.0,
+            cel_shade_smoothing: 0.0,
+            hard_detail_dlss: 1.5,
+            specular_restoration: 1.2,
+            gamut_rebalance: 1.0,
         }
     }
 }
@@ -94,7 +109,7 @@ pub fn perf_quality_for_factor(factor: f32) -> u32 {
 pub fn sync_reshade_ini(host_dir: &Path, settings: &Dlss5Settings, is_upscaling: bool) -> io::Result<()> {
     let ini_path = host_dir.join("ReShade.ini");
     let content = format!(
-        "[ADDON]\nAddonPath=..\\dlssnr\n\n[RenoDX.DLSS5]\nEnableHooks=2\nNREnableUpscaling={}\nNRPreset={}\nNRStyle={}\nNRAutoMask={}\nNRUICorrection={}\nNRIntensity={:.4}\nNRLocalTone={:.4}\nNRLocalStructure={:.4}\nNRSkinStructure={:.4}\nNRGlobalTone={:.4}\nNRColorStrength={:.4}\nNRTransferStrength={:.4}\nNRDiffuseWhiteNits={:.4}\nNRPaperWhiteScale={:.4}\nNRDepthMode={}\nNRMVecScaleX={:.4}\nNRMVecScaleY={:.4}\n\n[ReShade.DLSS5.Shaders]\nCASSharpening={:.4}\nClarity={:.4}\nBloomThreshold={:.4}\nChromaAberration={:.4}\nVignette={:.4}\nDeband={}\nTonemapper={}\nRayReconstruction={}\n",
+        "[ADDON]\nAddonPath=..\\dlssnr\n\n[RenoDX.DLSS5]\nEnableHooks=2\nNREnableUpscaling={}\nNRPreset={}\nNRStyle={}\nNRAutoMask={}\nNRUICorrection={}\nNRIntensity={:.4}\nNRLocalTone={:.4}\nNRLocalStructure={:.4}\nNRSkinStructure={:.4}\nNRGlobalTone={:.4}\nNRColorStrength={:.4}\nNRTransferStrength={:.4}\nNRDiffuseWhiteNits={:.4}\nNRPaperWhiteScale={:.4}\nNRDepthMode={}\nNRMVecScaleX={:.4}\nNRMVecScaleY={:.4}\nNRRealismMode={}\nNRDelineation={:.4}\nNRTextureSynthesis={:.4}\nNRCelShadeSmoothing={:.4}\nNRHardDetail={:.4}\nNRSpecularRestoration={:.4}\nNRGamutRebalance={:.4}\n\n[ReShade.DLSS5.Shaders]\nCASSharpening={:.4}\nClarity={:.4}\nBloomThreshold={:.4}\nChromaAberration={:.4}\nVignette={:.4}\nDeband={}\nTonemapper={}\nRayReconstruction={}\n",
         if is_upscaling { 1 } else { 0 },
         settings.preset,
         settings.style,
@@ -112,6 +127,13 @@ pub fn sync_reshade_ini(host_dir: &Path, settings: &Dlss5Settings, is_upscaling:
         settings.depth_mode,
         settings.mvec_scale_x,
         settings.mvec_scale_y,
+        settings.realism_mode,
+        settings.delineation,
+        settings.texture_synthesis,
+        settings.cel_shade_smoothing,
+        settings.hard_detail_dlss,
+        settings.specular_restoration,
+        settings.gamut_rebalance,
         settings.cas_sharpening,
         settings.clarity,
         settings.bloom_threshold,
@@ -154,14 +176,21 @@ impl Dlss5Session {
             return Err(format!("Worker not found at: {:?}", worker_bin));
         }
 
-        let mut child = Command::new(&worker_bin)
-            .arg("--video")
+        let mut cmd = Command::new(&worker_bin);
+        cmd.arg("--video");
+        let gpu = crate::hardware::detect_primary_gpu();
+        if !gpu.luid.is_empty() && gpu.luid.len() == 16 {
+            cmd.args(["--adapter-luid", &gpu.luid]);
+        }
+
+        let mut child = cmd
             .current_dir(runtime_host_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("Failed to spawn DLSS 5 worker: {}", e))?;
+
 
         let stdin = child.stdin.as_mut().ok_or("Failed to open stdin for worker")?;
 

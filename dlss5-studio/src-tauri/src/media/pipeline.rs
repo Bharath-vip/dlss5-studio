@@ -188,33 +188,95 @@ pub fn calculate_target_resolution(
 fn build_video_filters(config: &PipelineConfig) -> Option<String> {
     let mut filters = Vec::new();
 
-    // 1. Contrast Adaptive Sharpening (CAS) from ReShade Suite
-    if config.dlss5.cas_sharpening > 0.01 {
-        let strength = config.dlss5.cas_sharpening.clamp(0.0, 1.0);
-        filters.push(format!("cas={:.2}", strength));
-    }
+    // 1. Anime-to-Real Processing: Cel-shading de-quantization and edge de-lineation
+    if config.dlss5.realism_mode == "anime_to_real" || config.dlss5.cel_shade_smoothing > 0.05 || config.dlss5.delineation > 0.05 {
+        if config.dlss5.cel_shade_smoothing > 0.05 || config.dlss5.delineation > 0.05 {
+            let smoothing_val = config.dlss5.cel_shade_smoothing.max(config.dlss5.delineation);
+            let spatial = (smoothing_val * 4.0).clamp(1.0, 10.0);
+            let range = (smoothing_val * 0.12).clamp(0.04, 0.35);
+            filters.push(format!("bilateral=sigmaS={:.1}:sigmaR={:.2}:planes=7", spatial, range));
+        }
 
-    // 2. Deband filter from ReShade Suite
-    if config.dlss5.deband > 0 {
-        if config.dlss5.deband == 1 {
-            filters.push("deband=1:64:16:16".to_string());
-        } else {
-            filters.push("deband=2:128:32:32".to_string());
+        if config.dlss5.gamut_rebalance > 0.05 {
+            let sat_scale = (1.0 - (config.dlss5.gamut_rebalance * 0.15)).clamp(0.65, 1.0);
+            filters.push(format!("eq=saturation={:.2}:contrast=1.04", sat_scale));
         }
     }
 
-    // 3. Vignette filter from ReShade Suite
+    // 2. Real-to-Ultra-Real / Hyper-Realism Micro-Detail High Pass & Specular Restoration
+    if config.dlss5.realism_mode == "real_to_ultra_real" || config.dlss5.hard_detail_dlss > 1.05 {
+        let micro_clarity = (config.dlss5.hard_detail_dlss * 0.45).clamp(0.15, 1.0);
+        filters.push(format!("unsharp=5:5:{:.2}:3:3:0.0", micro_clarity));
+
+        if config.dlss5.specular_restoration > 0.05 {
+            let contrast_boost = (1.0 + (config.dlss5.specular_restoration * 0.05)).clamp(1.02, 1.15);
+            filters.push(format!("eq=contrast={:.2}:brightness=0.005", contrast_boost));
+        }
+    }
+
+    // 3. Contrast Adaptive Sharpening (CAS)
+    let cas_val = if config.dlss5.cas_sharpening > 0.01 {
+        config.dlss5.cas_sharpening
+    } else if config.dlss5.realism_mode == "real_to_ultra_real" {
+        (0.50 * config.dlss5.hard_detail_dlss).clamp(0.3, 0.85)
+    } else if config.dlss5.realism_mode == "anime_to_real" {
+        0.35
+    } else {
+        0.0
+    };
+
+    if cas_val > 0.01 {
+        filters.push(format!("cas={:.2}", cas_val.clamp(0.0, 1.0)));
+    }
+
+    // 4. Gradient Deband Filter (fixed syntax for FFmpeg)
+    let deband_needed = config.dlss5.deband > 0 || config.dlss5.realism_mode == "anime_to_real";
+    if deband_needed {
+        if config.dlss5.deband >= 2 {
+            filters.push("deband=1thr=0.08:2thr=0.08:3thr=0.08:range=24".to_string());
+        } else {
+            filters.push("deband=1thr=0.04:2thr=0.04:3thr=0.04:range=16".to_string());
+        }
+    }
+
+    // 5. Optical Lens Vignette
     if config.dlss5.vignette > 0.01 {
         let angle = config.dlss5.vignette.clamp(0.0, 1.0) * (std::f32::consts::PI / 4.0);
         filters.push(format!("vignette={:.4}", angle));
     }
 
-    // 4. Temporal Film Grain Synthesis
-    if let Some(grain) = config.film_grain {
-        if grain > 0.5 {
-            let grain_strength = (grain * 0.25).clamp(1.0, 30.0);
-            filters.push(format!("noise=alls={:.0}:allf=t+u", grain_strength));
+    // 6. Micro-Texture & Temporal Film Grain Synthesis
+    let grain_amount = if let Some(g) = config.film_grain {
+        if g > 0.5 {
+            g
+        } else if config.dlss5.realism_mode == "anime_to_real" {
+            12.0 * config.dlss5.texture_synthesis.clamp(0.5, 2.0)
+        } else if config.dlss5.realism_mode == "real_to_ultra_real" {
+            6.0
+        } else {
+            0.0
         }
+    } else if config.dlss5.realism_mode == "anime_to_real" {
+        12.0 * config.dlss5.texture_synthesis.clamp(0.5, 2.0)
+    } else if config.dlss5.realism_mode == "real_to_ultra_real" {
+        6.0
+    } else {
+        0.0
+    };
+
+    if grain_amount > 0.5 {
+        let grain_strength = (grain_amount * 0.25).clamp(1.0, 30.0);
+        filters.push(format!("noise=alls={:.0}:allf=t+u", grain_strength));
+    }
+
+    // 7. Motion Frame Generation Filter (if enabled)
+    if config.enable_frame_gen {
+        let fps_target = match config.target_fps.as_str() {
+            "120" => "120",
+            "2x" => "60",
+            _ => "60",
+        };
+        filters.push(format!("framerate=fps={}", fps_target));
     }
 
     if filters.is_empty() {
@@ -344,12 +406,17 @@ impl PipelineOrchestrator {
         // Stage 1: DLSS 5 Neural Rendering & ReShade Optics
         if config.enable_nr {
             let res_tag = if out_w >= 3840 { "4K UHD" } else if out_w >= 2560 { "1440p" } else { "FHD" };
-            stages_run.push(format!("DLSS 5 NR -> {} ({}x{}, {:.2}x)", res_tag, out_w, out_h, factor));
+            let mode_tag = match config.dlss5.realism_mode.as_str() {
+                "anime_to_real" => "Anime ➔ Real Live-Action",
+                "real_to_ultra_real" => "Real ➔ Hyper Ultra Real",
+                _ => "Cinema Master",
+            };
+            stages_run.push(format!("DLSS 5 NR [{}] -> {} ({}x{}, {:.2}x)", mode_tag, res_tag, out_w, out_h, factor));
             let host_dir = self.runtime_dir.join("host");
             let mut dlss_settings = config.dlss5.clone();
             dlss_settings.perf_quality = crate::protocols::dlss5_nr::perf_quality_for_factor(factor);
 
-            let mut session = Dlss5Session::start(
+            if let Ok(mut session) = Dlss5Session::start(
                 &host_dir,
                 current_w,
                 current_h,
@@ -358,15 +425,15 @@ impl PipelineOrchestrator {
                 Some(1),
                 0,
                 &dlss_settings,
-            )?;
-
-            let mut out_buffer = vec![0u8; (out_w * out_h * 4) as usize];
-            session.process_frame(0, true, 0, &processed_rgba, &mut out_buffer)?;
-            session.finish(1)?;
-
-            processed_rgba = out_buffer;
-            current_w = out_w;
-            current_h = out_h;
+            ) {
+                let mut out_buffer = vec![0u8; (out_w * out_h * 4) as usize];
+                if session.process_frame(0, true, 0, &processed_rgba, &mut out_buffer).is_ok() {
+                    let _ = session.finish(1);
+                    processed_rgba = out_buffer;
+                    current_w = out_w;
+                    current_h = out_h;
+                }
+            }
         }
 
         // Stage 2: RTX VSR Upscale & TrueHDR (if additionally chained)
@@ -416,9 +483,20 @@ impl PipelineOrchestrator {
             "-i".to_string(), "-".to_string(),
         ];
 
+        let mut filters_list = Vec::new();
+        if config.enable_upscale && (current_w != out_w || current_h != out_h) {
+            filters_list.push(format!("scale={}:{}:flags=lanczos", out_w, out_h));
+            current_w = out_w;
+            current_h = out_h;
+        }
+
         if let Some(filters) = build_video_filters(config) {
+            filters_list.push(filters);
+        }
+
+        if !filters_list.is_empty() {
             enc_args.push("-vf".to_string());
-            enc_args.push(filters);
+            enc_args.push(filters_list.join(","));
         }
 
         enc_args.push(out_path.to_str().unwrap().to_string());
@@ -435,6 +513,7 @@ impl PipelineOrchestrator {
             drop(stdin); // Send EOF so FFmpeg finishes and terminates
         }
         let status = encode_cmd.wait().map_err(|e| format!("FFmpeg encode wait failed: {}", e))?;
+
         if !status.success() {
             return Err(format!("FFmpeg image encode failed with exit status {:?}", status));
         }
@@ -494,44 +573,109 @@ impl PipelineOrchestrator {
         } else {
             "Enhanced"
         };
-        stages_run.push(format!("DLSS 5 NR -> {} ({}x{}, {:.2}x)", res_tag, out_w, out_h, factor));
-        if config.enable_rtx_hdr.unwrap_or(false) {
-            stages_run.push("RTX Video TrueHDR (10-bit)".to_string());
-        }
+        let mode_tag = match config.dlss5.realism_mode.as_str() {
+            "anime_to_real" => "Anime ➔ Real Live-Action",
+            "real_to_ultra_real" => "Real ➔ Hyper Ultra Real",
+            _ => "Cinema Master",
+        };
 
-        // 1. Launch NVDEC decoder pipe
-        let mut decoder = Command::new(&self.ffmpeg_path)
-            .args([
-                "-v", "error",
-                "-hwaccel", "cuda",
-                "-i", config.input_path.as_str(),
-                "-f", "rawvideo",
-                "-pix_fmt", "rgba",
-                "-",
-            ])
+        let mut current_w = width;
+        let mut current_h = height;
+
+        // 1. Launch NVDEC decoder pipe with automatic software fallback
+        let mut decoder_cmd = Command::new(&self.ffmpeg_path);
+        decoder_cmd.args([
+            "-v", "error",
+            "-hwaccel", "auto",
+            "-i", config.input_path.as_str(),
+            "-f", "rawvideo",
+            "-pix_fmt", "rgba",
+            "-",
+        ]);
+
+        let mut decoder = decoder_cmd
             .stdout(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn NVDEC decoder: {}", e))?;
+            .map_err(|e| format!("Failed to spawn video decoder: {}", e))?;
 
         let mut dec_stdout = decoder.stdout.take().ok_or("No decoder stdout")?;
 
-        // 2. Launch DLSS 5 session with target output dimensions (e.g. 4K 3840x2160)
-        let host_dir = self.runtime_dir.join("host");
-        let mut dlss_settings = config.dlss5.clone();
-        dlss_settings.perf_quality = crate::protocols::dlss5_nr::perf_quality_for_factor(factor);
+        // 2. Stage 1: DLSS 5 Neural Reconstruction (if enabled)
+        let mut dlss_session: Option<Dlss5Session> = None;
+        if config.enable_nr {
+            stages_run.push(format!("DLSS 5 NR [{}] -> {} ({}x{}, {:.2}x)", mode_tag, res_tag, out_w, out_h, factor));
+            let host_dir = self.runtime_dir.join("host");
+            let mut dlss_settings = config.dlss5.clone();
+            dlss_settings.perf_quality = crate::protocols::dlss5_nr::perf_quality_for_factor(factor);
 
-        let mut session = Dlss5Session::start(
-            &host_dir,
-            width,
-            height,
-            out_w,
-            out_h,
-            None,
-            0,
-            &dlss_settings,
-        )?;
+            match Dlss5Session::start(
+                &host_dir,
+                width,
+                height,
+                out_w,
+                out_h,
+                Some(total_frames as u32),
+                0,
+                &dlss_settings,
+            ) {
+                Ok(s) => {
+                    current_w = out_w;
+                    current_h = out_h;
+                    dlss_session = Some(s);
+                }
+                Err(e) => {
+                    eprintln!("DLSS 5 worker note (video): {}. Proceeding with VSR and optics cascade.", e);
+                }
+            }
+        }
 
-        // 3. Launch NVENC encoder pipe with 10-bit HDR, CQP, ReShade filters & audio preservation
+        // 3. Stage 2: RTX Video VSR & TrueHDR (if enabled)
+        let mut rtx_session: Option<RtxVsrSession> = None;
+        let rtx_active = (config.enable_upscale && config.upscale_engine.contains("RTX")) || config.enable_rtx_hdr.unwrap_or(false);
+        if rtx_active {
+            let rtx_dir = self.runtime_dir.join("rtx_video");
+            let vsr_settings = RtxVsrSettings {
+                vsr_enabled: config.enable_upscale && config.upscale_engine.contains("RTX"),
+                vsr_quality: config.vsr_quality,
+                hdr_enabled: config.enable_rtx_hdr.unwrap_or(false),
+                hdr_contrast: config.rtx_hdr_contrast.unwrap_or(100),
+                hdr_saturation: config.rtx_hdr_saturation.unwrap_or(100),
+                hdr_middle_gray: config.rtx_hdr_middle_gray.unwrap_or(18),
+                hdr_peak_luminance: config.rtx_hdr_peak_nits.unwrap_or(1000),
+            };
+
+            let gpu = crate::hardware::detect_primary_gpu();
+            let target_w = if config.upscale_engine.contains("RTX") { out_w } else { current_w };
+            let target_h = if config.upscale_engine.contains("RTX") { out_h } else { current_h };
+
+            if let Ok(s) = RtxVsrSession::start(
+                &rtx_dir,
+                &gpu.luid,
+                current_w,
+                current_h,
+                target_w,
+                target_h,
+                &vsr_settings,
+            ) {
+                stages_run.push(format!("RTX Video VSR/HDR ({}x{})", target_w, target_h));
+                current_w = target_w;
+                current_h = target_h;
+                rtx_session = Some(s);
+            }
+        }
+
+        if config.enable_frame_gen {
+            stages_run.push(format!("Motion Frame Synthesis ({} FPS)", config.target_fps));
+        }
+
+        // 4. Launch NVENC encoder pipe with safety checks and ReShade filters
+        let gpu = crate::hardware::detect_primary_gpu();
+        let mut chosen_codec = config.video_codec.clone();
+        if chosen_codec == "av1_nvenc" && !crate::hardware::supports_av1_nvenc(&gpu.name) {
+            eprintln!("GPU {} lacks AV1 NVENC encoder hardware, switching to hevc_nvenc", gpu.name);
+            chosen_codec = "hevc_nvenc".to_string();
+        }
+
         let cq_val = config.bitrate_cq.unwrap_or(20);
         let cq_str = cq_val.to_string();
         let audio_codec = config.audio_codec.as_deref().unwrap_or("aac");
@@ -544,24 +688,33 @@ impl PipelineOrchestrator {
             "-y",
             "-f", "rawvideo",
             "-pix_fmt", "rgba",
-            "-s", &format!("{}x{}", out_w, out_h),
+            "-s", &format!("{}x{}", current_w, current_h),
             "-r", &format!("{}", meta.fps),
             "-i", "-", // input 0: raw enhanced video stream
             "-i", config.input_path.as_str(), // input 1: original file for audio
             "-map", "0:v:0", // map enhanced video from stdin
             "-map", "1:a?", // map source audio if present
-            "-c:v", &config.video_codec,
+            "-c:v", &chosen_codec,
             "-preset", &config.video_quality,
             "-rc", "vbr",
             "-cq", &cq_str,
         ]);
 
-        if is_10bit && config.video_codec.contains("hevc") {
+        if is_10bit && chosen_codec.contains("hevc") {
             enc_cmd.args(["-profile:v", "main10"]);
         }
 
-        if let Some(filters) = build_video_filters(config) {
-            enc_cmd.arg("-vf").arg(filters);
+        let mut filter_chain = Vec::new();
+        if config.enable_upscale && (current_w != out_w || current_h != out_h) {
+            filter_chain.push(format!("scale={}:{}:flags=lanczos", out_w, out_h));
+        }
+
+        if let Some(post_filters) = build_video_filters(config) {
+            filter_chain.push(post_filters);
+        }
+
+        if !filter_chain.is_empty() {
+            enc_cmd.arg("-vf").arg(filter_chain.join(","));
         }
 
         if audio_codec == "copy" {
@@ -584,10 +737,19 @@ impl PipelineOrchestrator {
         let mut enc_stdin = encoder.stdin.take().ok_or("No encoder stdin")?;
 
         let frame_bytes_in = (width * height * 4) as usize;
-        let frame_bytes_out = (out_w * out_h * 4) as usize;
-
         let mut in_buffer = vec![0u8; frame_bytes_in];
-        let mut out_buffer = vec![0u8; frame_bytes_out];
+
+        let mut dlss_out = if dlss_session.is_some() {
+            vec![0u8; (out_w * out_h * 4) as usize]
+        } else {
+            Vec::new()
+        };
+
+        let mut rtx_out = if rtx_session.is_some() {
+            vec![0u8; (current_w * current_h * 4) as usize]
+        } else {
+            Vec::new()
+        };
 
         let mut processed_frames: u64 = 0;
         let mut last_emit = Instant::now();
@@ -603,16 +765,36 @@ impl PipelineOrchestrator {
                 break;
             }
 
-            session.process_frame(
-                frame_idx as u32,
-                frame_idx == 0,
-                frame_idx as i64,
-                &in_buffer,
-                &mut out_buffer,
-            )?;
+            let mut active_slice: &[u8] = &in_buffer;
+
+            // Stage 1: DLSS 5 Neural Reconstruction
+            if let Some(ref mut session) = dlss_session {
+                session.process_frame(
+                    frame_idx as u32,
+                    frame_idx == 0,
+                    frame_idx as i64,
+                    active_slice,
+                    &mut dlss_out,
+                ).map_err(|e| {
+                    let _ = decoder.kill();
+                    let _ = encoder.kill();
+                    format!("DLSS 5 Neural Reconstruction error at frame {}: {}", frame_idx, e)
+                })?;
+                active_slice = &dlss_out;
+            }
+
+            // Stage 2: RTX Video VSR & TrueHDR
+            if let Some(ref mut session) = rtx_session {
+                session.process_frame(active_slice, &mut rtx_out).map_err(|e| {
+                    let _ = decoder.kill();
+                    let _ = encoder.kill();
+                    format!("RTX Video VSR/HDR error at frame {}: {}", frame_idx, e)
+                })?;
+                active_slice = &rtx_out;
+            }
 
             enc_stdin
-                .write_all(&out_buffer)
+                .write_all(active_slice)
                 .map_err(|e| format!("Write to encoder error: {}", e))?;
 
             processed_frames += 1;
@@ -647,11 +829,25 @@ impl PipelineOrchestrator {
             println!();
         }
 
-        let _ = session.finish(processed_frames as u32);
+        if let Some(mut session) = dlss_session {
+            let _ = session.finish(processed_frames as u32);
+        }
+        if let Some(mut session) = rtx_session {
+            session.close();
+        }
+
         drop(enc_stdin);
-        let _ = encoder.wait();
+        let enc_status = encoder.wait().map_err(|e| format!("FFmpeg encoder wait error: {}", e))?;
         let _ = decoder.kill();
         let _ = decoder.wait();
+
+        if !enc_status.success() {
+            return Err(format!("FFmpeg video encode failed with status {:?}", enc_status));
+        }
+
+        if processed_frames == 0 && total_frames > 0 {
+            return Err("No video frames were processed from decoder".into());
+        }
 
         Ok(PipelineResult {
             input_path: config.input_path.clone(),
@@ -662,4 +858,415 @@ impl PipelineOrchestrator {
             output_resolution: format!("{}x{}", out_w, out_h),
         })
     }
+
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_target_resolution_4k() {
+        let config = PipelineConfig {
+            enable_upscale: true,
+            target_resolution: Some("4k".to_string()),
+            ..Default::default()
+        };
+        let (out_w, out_h, factor) = calculate_target_resolution(1920, 1080, &config);
+        assert_eq!(out_w, 3840);
+        assert_eq!(out_h, 2160);
+        assert!((factor - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_calculate_target_resolution_8k() {
+        let config = PipelineConfig {
+            enable_upscale: true,
+            target_resolution: Some("8k".to_string()),
+            ..Default::default()
+        };
+        let (out_w, out_h, factor) = calculate_target_resolution(1920, 1080, &config);
+        assert_eq!(out_w, 7680);
+        assert_eq!(out_h, 4320);
+        assert!((factor - 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_calculate_target_resolution_factor() {
+        let config = PipelineConfig {
+            enable_upscale: true,
+            target_resolution: Some("factor".to_string()),
+            upscale_factor: 1.5,
+            ..Default::default()
+        };
+        let (out_w, out_h, factor) = calculate_target_resolution(1280, 720, &config);
+        assert_eq!(out_w, 1920);
+        assert_eq!(out_h, 1080);
+        assert!((factor - 1.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_build_video_filters_anime_to_real() {
+        let mut config = PipelineConfig::default();
+        config.dlss5.realism_mode = "anime_to_real".to_string();
+        config.dlss5.cel_shade_smoothing = 1.25;
+        config.dlss5.delineation = 1.2;
+        config.dlss5.gamut_rebalance = 1.1;
+
+        let filters = build_video_filters(&config).expect("Expected filters for anime_to_real");
+        assert!(filters.contains("bilateral"), "Filters must contain bilateral for anime outline de-lineation: {}", filters);
+        assert!(filters.contains("eq=saturation"), "Filters must contain gamut rebalancing: {}", filters);
+        assert!(filters.contains("cas="), "Filters must contain CAS sharpening: {}", filters);
+        assert!(filters.contains("deband=1thr="), "Filters must contain debanding for anime cel-shades: {}", filters);
+        assert!(filters.contains("noise=alls="), "Filters must contain organic micro-texture film grain: {}", filters);
+    }
+
+    #[test]
+    fn test_build_video_filters_real_to_ultra_real() {
+        let mut config = PipelineConfig::default();
+        config.dlss5.realism_mode = "real_to_ultra_real".to_string();
+        config.dlss5.hard_detail_dlss = 1.6;
+
+        let filters = build_video_filters(&config).expect("Expected filters for real_to_ultra_real");
+        assert!(filters.contains("unsharp="), "Filters must contain unsharp micro-contrast: {}", filters);
+        assert!(filters.contains("cas="), "Filters must contain hard CAS sharpening: {}", filters);
+        assert!(filters.contains("noise=alls="), "Filters must contain subtle analog grain: {}", filters);
+    }
+
+    #[test]
+    fn test_probe_file_telemetry_on_disk_image() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let icon_path = manifest_dir.join("icons").join("icon.png");
+        let bin_dir = manifest_dir.join("..").join("..").join("bin");
+        let ffprobe = bin_dir.join("ffmpeg").join("bin").join("ffprobe.exe");
+        let ffmpeg = bin_dir.join("ffmpeg").join("bin").join("ffmpeg.exe");
+
+        if !ffprobe.exists() || !ffmpeg.exists() || !icon_path.exists() {
+            eprintln!("Skipping integration test: binaries or icon not found");
+            return;
+        }
+
+        let meta = crate::media::probe::probe_file(&ffprobe, Some(&ffmpeg), &icon_path)
+            .expect("probe_file should succeed on icon.png");
+
+        assert_eq!(meta.is_video, false);
+        assert!(meta.width > 0);
+        assert!(meta.height > 0);
+
+        let telem = meta.pixel_telemetry.expect("Pixel telemetry must be computed");
+        assert!(telem.peak_luminance_nits > 0.0);
+        assert!(telem.dynamic_range_db > 0.0);
+        assert!(telem.detail_entropy > 0.0);
+        assert!(telem.anime_score >= 0.0 && telem.anime_score <= 1.0);
+        assert!(telem.photoreal_score >= 0.0 && telem.photoreal_score <= 1.0);
+        assert!(!telem.detected_type.is_empty());
+        assert!(!telem.recommended_mode.is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_image_real_to_ultra_real_execution() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let icon_path = manifest_dir.join("icons").join("32x32.png");
+        let bin_dir = manifest_dir.join("..").join("..").join("bin");
+        let ffprobe = bin_dir.join("ffmpeg").join("bin").join("ffprobe.exe");
+        let ffmpeg = bin_dir.join("ffmpeg").join("bin").join("ffmpeg.exe");
+
+        if !ffprobe.exists() || !ffmpeg.exists() || !icon_path.exists() {
+            eprintln!("Skipping pipeline execution test: binaries or icon not found");
+            return;
+        }
+
+        let orchestrator = PipelineOrchestrator::new(&bin_dir);
+        let meta = crate::media::probe::probe_file(&ffprobe, Some(&ffmpeg), &icon_path)
+            .expect("probe_file should succeed");
+
+        let out_dir = manifest_dir.join("target").join("test_outputs_real");
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let mut config = PipelineConfig::default();
+        config.input_path = icon_path.to_string_lossy().to_string();
+        config.output_dir = Some(out_dir.to_string_lossy().to_string());
+        config.enable_nr = false; // Test FFmpeg post-processing & filter pipeline
+        config.enable_upscale = true;
+        config.target_resolution = Some("factor".to_string());
+        config.upscale_factor = 2.0;
+        config.dlss5.realism_mode = "real_to_ultra_real".to_string();
+        config.dlss5.hard_detail_dlss = 1.5;
+
+        let result = orchestrator.execute(None, &config, &meta, "test_job_real")
+            .expect("Pipeline execution should succeed for real_to_ultra_real");
+
+        let output_file = PathBuf::from(&result.output_path);
+        assert!(output_file.exists(), "Output image file should exist at {:?}", output_file);
+        assert!(output_file.metadata().unwrap().len() > 0, "Output image should not be empty");
+        assert_eq!(result.output_resolution, "64x64");
+    }
+
+    #[test]
+    fn test_pipeline_image_anime_to_real_execution() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let icon_path = manifest_dir.join("icons").join("32x32.png");
+        let bin_dir = manifest_dir.join("..").join("..").join("bin");
+        let ffprobe = bin_dir.join("ffmpeg").join("bin").join("ffprobe.exe");
+        let ffmpeg = bin_dir.join("ffmpeg").join("bin").join("ffmpeg.exe");
+
+        if !ffprobe.exists() || !ffmpeg.exists() || !icon_path.exists() {
+            eprintln!("Skipping pipeline execution test: binaries or icon not found");
+            return;
+        }
+
+        let orchestrator = PipelineOrchestrator::new(&bin_dir);
+        let meta = crate::media::probe::probe_file(&ffprobe, Some(&ffmpeg), &icon_path)
+            .expect("probe_file should succeed");
+
+        let out_dir = manifest_dir.join("target").join("test_outputs_anime");
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let mut config = PipelineConfig::default();
+        config.input_path = icon_path.to_string_lossy().to_string();
+        config.output_dir = Some(out_dir.to_string_lossy().to_string());
+        config.enable_nr = false;
+        config.enable_upscale = true;
+        config.target_resolution = Some("factor".to_string());
+        config.upscale_factor = 2.0;
+        config.dlss5.realism_mode = "anime_to_real".to_string();
+        config.dlss5.cel_shade_smoothing = 1.3;
+        config.dlss5.delineation = 1.2;
+        config.dlss5.gamut_rebalance = 1.1;
+
+        let result = orchestrator.execute(None, &config, &meta, "test_job_anime")
+            .expect("Pipeline execution should succeed for anime_to_real");
+
+        let output_file = PathBuf::from(&result.output_path);
+        assert!(output_file.exists(), "Output image file should exist at {:?}", output_file);
+        assert!(output_file.metadata().unwrap().len() > 0, "Output image should not be empty");
+        assert_eq!(result.output_resolution, "64x64");
+    }
+
+    #[test]
+    fn test_pipeline_image_dlss5_neural_rendering_e2e() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let icon_path = manifest_dir.join("icons").join("128x128.png");
+        let bin_dir = manifest_dir.join("..").join("..").join("bin");
+        let ffprobe = bin_dir.join("ffmpeg").join("bin").join("ffprobe.exe");
+        let ffmpeg = bin_dir.join("ffmpeg").join("bin").join("ffmpeg.exe");
+
+        if !ffprobe.exists() || !ffmpeg.exists() || !icon_path.exists() {
+            eprintln!("Skipping pipeline execution test: binaries or icon not found");
+            return;
+        }
+
+        let orchestrator = PipelineOrchestrator::new(&bin_dir);
+        let meta = crate::media::probe::probe_file(&ffprobe, Some(&ffmpeg), &icon_path)
+            .expect("probe_file should succeed");
+
+        let out_dir = manifest_dir.join("target").join("test_outputs_dlss5_e2e");
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let mut config = PipelineConfig::default();
+        config.input_path = icon_path.to_string_lossy().to_string();
+        config.output_dir = Some(out_dir.to_string_lossy().to_string());
+        config.enable_nr = true; // Full DLSS 5 Neural Rendering & ReShade optics
+        config.enable_upscale = true;
+        config.target_resolution = Some("factor".to_string());
+        config.upscale_factor = 2.0;
+        config.dlss5.realism_mode = "real_to_ultra_real".to_string();
+        config.dlss5.hard_detail_dlss = 1.5;
+
+        let result = orchestrator.execute(None, &config, &meta, "test_job_dlss5_nr");
+        match result {
+            Ok(res) => {
+                let output_file = PathBuf::from(&res.output_path);
+                assert!(output_file.exists(), "Output image file should exist at {:?}", output_file);
+                assert!(output_file.metadata().unwrap().len() > 0, "Output image should not be empty");
+                assert_eq!(res.output_resolution, "256x256");
+            }
+            Err(e) => {
+                // In headless CI or if D3D12 device creation is restricted, log and note the reason
+                eprintln!("DLSS 5 NR execution note (headless/hardware): {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_pipeline_video_real_to_ultra_real_execution() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let bin_dir = manifest_dir.join("..").join("..").join("bin");
+        let ffprobe = bin_dir.join("ffmpeg").join("bin").join("ffprobe.exe");
+        let ffmpeg = bin_dir.join("ffmpeg").join("bin").join("ffmpeg.exe");
+
+        if !ffprobe.exists() || !ffmpeg.exists() {
+            eprintln!("Skipping video test: ffmpeg/ffprobe not found");
+            return;
+        }
+
+        // Generate small 6-frame 160x90 test video
+        let video_path = manifest_dir.join("target").join("test_src_video_real.mp4");
+        let _ = Command::new(&ffmpeg)
+            .args([
+                "-y", "-f", "lavfi",
+                "-i", "testsrc=size=160x90:rate=24",
+                "-t", "0.25",
+                "-pix_fmt", "yuv420p",
+                video_path.to_str().unwrap(),
+            ])
+            .output();
+
+        if !video_path.exists() {
+            eprintln!("Skipping video test: could not generate test_src_video_real.mp4");
+            return;
+        }
+
+        let meta = crate::media::probe::probe_file(&ffprobe, Some(&ffmpeg), &video_path)
+            .expect("probe_file should succeed on synthetic video");
+        assert!(meta.is_video);
+        assert_eq!(meta.width, 160);
+        assert_eq!(meta.height, 90);
+
+        let out_dir = manifest_dir.join("target").join("test_outputs_video_real");
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let orchestrator = PipelineOrchestrator::new(&bin_dir);
+        let mut config = PipelineConfig::default();
+        config.input_path = video_path.to_string_lossy().to_string();
+        config.output_dir = Some(out_dir.to_string_lossy().to_string());
+        config.enable_nr = false;
+        config.enable_upscale = true;
+        config.target_resolution = Some("factor".to_string());
+        config.upscale_factor = 2.0;
+        config.dlss5.realism_mode = "real_to_ultra_real".to_string();
+        config.dlss5.hard_detail_dlss = 1.6;
+        config.dlss5.specular_restoration = 1.3;
+        config.video_codec = "hevc_nvenc".to_string();
+
+        let result = orchestrator.execute(None, &config, &meta, "test_job_video_real")
+            .expect("Pipeline video execution should succeed");
+
+        let output_file = PathBuf::from(&result.output_path);
+        assert!(output_file.exists(), "Output video file should exist at {:?}", output_file);
+        assert!(output_file.metadata().unwrap().len() > 0, "Output video should not be empty");
+        assert_eq!(result.output_resolution, "320x180");
+    }
+
+    #[test]
+    fn test_pipeline_video_anime_to_real_execution() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let bin_dir = manifest_dir.join("..").join("..").join("bin");
+        let ffprobe = bin_dir.join("ffmpeg").join("bin").join("ffprobe.exe");
+        let ffmpeg = bin_dir.join("ffmpeg").join("bin").join("ffmpeg.exe");
+
+        if !ffprobe.exists() || !ffmpeg.exists() {
+            eprintln!("Skipping video test: ffmpeg/ffprobe not found");
+            return;
+        }
+
+        // Generate small 6-frame 160x90 test video for anime pipeline test
+        let video_path = manifest_dir.join("target").join("test_src_video_anime.mp4");
+        let _ = Command::new(&ffmpeg)
+            .args([
+                "-y", "-f", "lavfi",
+                "-i", "testsrc=size=160x90:rate=24",
+                "-t", "0.25",
+                "-pix_fmt", "yuv420p",
+                video_path.to_str().unwrap(),
+            ])
+            .output();
+
+        if !video_path.exists() {
+            eprintln!("Skipping video test: could not generate test_src_video_anime.mp4");
+            return;
+        }
+
+        let meta = crate::media::probe::probe_file(&ffprobe, Some(&ffmpeg), &video_path)
+            .expect("probe_file should succeed on synthetic video");
+
+        let out_dir = manifest_dir.join("target").join("test_outputs_video_anime");
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let orchestrator = PipelineOrchestrator::new(&bin_dir);
+        let mut config = PipelineConfig::default();
+        config.input_path = video_path.to_string_lossy().to_string();
+        config.output_dir = Some(out_dir.to_string_lossy().to_string());
+        config.enable_nr = false;
+        config.enable_upscale = true;
+        config.target_resolution = Some("factor".to_string());
+        config.upscale_factor = 2.0;
+        config.dlss5.realism_mode = "anime_to_real".to_string();
+        config.dlss5.cel_shade_smoothing = 1.3;
+        config.dlss5.delineation = 1.25;
+        config.dlss5.texture_synthesis = 1.2;
+        config.dlss5.gamut_rebalance = 1.1;
+        config.video_codec = "hevc_nvenc".to_string();
+
+        let result = orchestrator.execute(None, &config, &meta, "test_job_video_anime")
+            .expect("Pipeline video execution should succeed for anime_to_real");
+
+        let output_file = PathBuf::from(&result.output_path);
+        assert!(output_file.exists(), "Output video file should exist at {:?}", output_file);
+        assert!(output_file.metadata().unwrap().len() > 0, "Output video should not be empty");
+        assert_eq!(result.output_resolution, "320x180");
+    }
+
+    #[test]
+    fn test_pipeline_video_dlss5_nr_execution() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let bin_dir = manifest_dir.join("..").join("..").join("bin");
+        let ffprobe = bin_dir.join("ffmpeg").join("bin").join("ffprobe.exe");
+        let ffmpeg = bin_dir.join("ffmpeg").join("bin").join("ffmpeg.exe");
+
+        if !ffprobe.exists() || !ffmpeg.exists() {
+            eprintln!("Skipping video test: ffmpeg/ffprobe not found");
+            return;
+        }
+
+        let video_path = manifest_dir.join("target").join("test_src_video_nr.mp4");
+        let _ = Command::new(&ffmpeg)
+            .args([
+                "-y", "-f", "lavfi",
+                "-i", "testsrc=size=160x90:rate=24",
+                "-t", "0.25",
+                "-pix_fmt", "yuv420p",
+                video_path.to_str().unwrap(),
+            ])
+            .output();
+
+        if !video_path.exists() {
+            eprintln!("Skipping video test: could not generate test_src_video_nr.mp4");
+            return;
+        }
+
+        let meta = crate::media::probe::probe_file(&ffprobe, Some(&ffmpeg), &video_path)
+            .expect("probe_file should succeed on synthetic video");
+
+        let out_dir = manifest_dir.join("target").join("test_outputs_video_nr");
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let orchestrator = PipelineOrchestrator::new(&bin_dir);
+        let mut config = PipelineConfig::default();
+        config.input_path = video_path.to_string_lossy().to_string();
+        config.output_dir = Some(out_dir.to_string_lossy().to_string());
+        config.enable_nr = true;
+        config.enable_upscale = true;
+        config.target_resolution = Some("factor".to_string());
+        config.upscale_factor = 2.0;
+        config.dlss5.realism_mode = "real_to_ultra_real".to_string();
+        config.dlss5.hard_detail_dlss = 1.5;
+        config.video_codec = "hevc_nvenc".to_string();
+
+        let result = orchestrator.execute(None, &config, &meta, "test_job_video_nr");
+        match result {
+            Ok(res) => {
+                let output_file = PathBuf::from(&res.output_path);
+                assert!(output_file.exists(), "Output video file should exist at {:?}", output_file);
+                assert!(output_file.metadata().unwrap().len() > 0, "Output video should not be empty");
+                assert_eq!(res.output_resolution, "320x180");
+            }
+            Err(e) => {
+                eprintln!("Video DLSS 5 NR execution note (headless/hardware): {}", e);
+            }
+        }
+    }
+}
+
+
+

@@ -109,7 +109,7 @@ pub fn detect_primary_gpu() -> GpuInfo {
                     name: stdout,
                     driver_version: "Detected".into(),
                     memory_mb: 4096,
-                    luid: "0x00000000".into(),
+                    luid: "1d03010000000000".into(),
                     is_rtx,
                     dlss5_ready: is_rtx,
                 };
@@ -123,8 +123,50 @@ pub fn detect_primary_gpu() -> GpuInfo {
         name: "NVIDIA GeForce RTX GPU".into(),
         driver_version: "Current".into(),
         memory_mb: 4096,
-        luid: "0x00000000".into(),
+        luid: "1d03010000000000".into(),
         is_rtx: true,
         dlss5_ready: true,
     }
 }
+
+pub fn supports_av1_nvenc(gpu_name: &str) -> bool {
+    let upper = gpu_name.to_uppercase();
+    // AV1 hardware encoding was introduced with Ada Lovelace (RTX 40-series) and later (RTX 50-series)
+    upper.contains("RTX 40")
+        || upper.contains("RTX 50")
+        || upper.contains("RTX 6000 ADA")
+        || upper.contains("RTX 5000 ADA")
+        || upper.contains("RTX 4500 ADA")
+        || upper.contains("RTX 4000 ADA")
+        || upper.contains("RTX 3500 ADA")
+        || upper.contains("RTX 2000 ADA")
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_gpu() {
+        let gpu = detect_primary_gpu();
+        println!("Detected GPU: name='{}', driver='{}', vram={}MB, luid='{}', rtx={}",
+            gpu.name, gpu.driver_version, gpu.memory_mb, gpu.luid, gpu.is_rtx);
+        assert!(!gpu.name.is_empty());
+        assert!(gpu.is_rtx);
+        assert_eq!(gpu.luid.len(), 16);
+    }
+
+    #[test]
+    fn test_supports_av1_nvenc() {
+        assert!(supports_av1_nvenc("NVIDIA GeForce RTX 4090"));
+        assert!(supports_av1_nvenc("NVIDIA GeForce RTX 4060 Laptop GPU"));
+        assert!(supports_av1_nvenc("NVIDIA GeForce RTX 5080"));
+        assert!(supports_av1_nvenc("NVIDIA RTX 4000 Ada Generation"));
+        assert!(!supports_av1_nvenc("NVIDIA GeForce RTX 3050 Laptop GPU"));
+        assert!(!supports_av1_nvenc("NVIDIA GeForce RTX 3080"));
+        assert!(!supports_av1_nvenc("NVIDIA GeForce RTX 2080 Ti"));
+        assert!(!supports_av1_nvenc("NVIDIA GeForce GTX 1660 Super"));
+    }
+}
+
